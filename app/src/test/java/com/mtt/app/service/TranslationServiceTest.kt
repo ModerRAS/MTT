@@ -8,51 +8,112 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import androidx.test.core.app.ApplicationProvider
+import com.mtt.app.HiltTestRunner
+import dagger.hilt.android.testing.HiltTestApplication
 import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.llm.RateLimiter
+import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.model.TranslationProgress
-import com.mtt.app.data.remote.llm.LlmService
+import com.mtt.app.data.network.HttpClientFactory
+import com.mtt.app.data.security.SecureStorage
+import com.mtt.app.di.AppModule
+import com.mtt.app.di.DatabaseModule
+import com.mtt.app.di.NetworkModule
+import com.mtt.app.di.RepositoryModule
+import com.mtt.app.di.SecurityModule
+import com.mtt.app.di.UseCaseModule
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.testing.HiltAndroidRule
+import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
+import dagger.hilt.components.SingletonComponent
 import io.mockk.mockk
+import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowNotification
 import org.robolectric.shadows.ShadowNotificationManager
-import java.lang.reflect.Method
+import javax.inject.Singleton
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [Build.VERSION_CODES.O])
+/**
+ * Unit tests for [TranslationService].
+ *
+ * Uses Hilt testing infrastructure (@HiltAndroidTest + @UninstallModules) to
+ * replace all production modules with a test module providing mock dependencies.
+ * This ensures [Robolectric.buildService] properly handles the @AndroidEntryPoint
+ * service without IllegalStateException from Hilt injection failures.
+ */
+@HiltAndroidTest
+@UninstallModules(
+    AppModule::class,
+    RepositoryModule::class,
+    UseCaseModule::class,
+    NetworkModule::class,
+    SecurityModule::class,
+    DatabaseModule::class
+)
+@RunWith(HiltTestRunner::class)
+@Config(application = HiltTestApplication::class, sdk = [Build.VERSION_CODES.O])
 class TranslationServiceTest {
+
+    @get:Rule
+    val hiltRule = HiltAndroidRule(this)
+
+    @Module
+    @InstallIn(SingletonComponent::class)
+    object TestModule {
+        @Provides
+        @Singleton
+        fun provideOkHttpClient(): OkHttpClient = OkHttpClient()
+
+        @Provides
+        @Singleton
+        fun provideRateLimiter(): RateLimiter = mockk(relaxed = true)
+
+        @Provides
+        @Singleton
+        fun provideCacheManager(): CacheManager = mockk(relaxed = true)
+
+        // Bindings needed by Hilt ViewModels in the test component
+        @Provides
+        @Singleton
+        fun provideHttpClientFactory(): HttpClientFactory = mockk(relaxed = true)
+
+        @Provides
+        @Singleton
+        fun provideSecureStorage(): SecureStorage = mockk(relaxed = true)
+
+        @Provides
+        @Singleton
+        fun provideGlossaryDao(): GlossaryDao = mockk(relaxed = true)
+    }
 
     private lateinit var service: TranslationService
     private lateinit var shadowNotificationManager: ShadowNotificationManager
 
-    private val mockLlmService = mockk<LlmService>(relaxed = true)
-    private val mockRateLimiter = mockk<RateLimiter>(relaxed = true)
-    private val mockCacheManager = mockk<CacheManager>(relaxed = true)
-
     @Before
     fun setUp() {
+        // Initialize Hilt component before creating the service
+        hiltRule.inject()
+
         // Reset shared state between tests
         TranslationService.pendingTexts = emptyList()
         TranslationService.pendingConfig = null
         TranslationService._serviceProgress.value = TranslationProgress.initial()
 
+        // With Hilt test infrastructure active, buildService properly handles
+        // the @AndroidEntryPoint service — injection succeeds
         service = Robolectric.buildService(TranslationService::class.java).create().get()
-
-        // Inject mock dependencies via reflection (Hilt not active in unit tests)
-        injectField("llmService", mockLlmService)
-        injectField("rateLimiter", mockRateLimiter)
-        injectField("cacheManager", mockCacheManager)
 
         shadowNotificationManager = shadowOf(
             service.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -339,15 +400,5 @@ class TranslationServiceTest {
     @Test
     fun `ACTION_START and ACTION_STOP are distinct`() {
         assertTrue(TranslationService.ACTION_START != TranslationService.ACTION_STOP)
-    }
-
-    // ═══════════════════════════════════════════════
-    //  Helpers
-    // ═══════════════════════════════════════════════
-
-    private fun injectField(name: String, value: Any) {
-        val field = TranslationService::class.java.getDeclaredField(name)
-        field.isAccessible = true
-        field.set(service, value)
     }
 }
