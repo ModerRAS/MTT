@@ -41,10 +41,6 @@ object LoggingInterceptor {
             logSafe(message, Log.DEBUG)
         }.apply {
             level = HttpLoggingInterceptor.Level.BODY
-            redactHeaders.add("Authorization")
-            redactHeaders.add("x-api-key")
-            redactHeaders.add("Cookie")
-            redactHeaders.add("Set-Cookie")
         }
     }
 
@@ -88,13 +84,13 @@ object LoggingInterceptor {
         var result = message
 
         SENSITIVE_PATTERNS.forEach { pattern ->
-            result = pattern.matcher(result).replaceAll { matchResult ->
-                val match = matchResult.value
+            result = pattern.matcher(result).replaceAll(Matcher.Replacement { matchResult ->
+                val match = matchResult.group()
                 // Keep the key, redact the value
                 val separator = if (match.contains(":")) ":" else " "
                 val key = match.substringBefore(separator)
                 "$key: [REDACTED]"
-            }
+            })
         }
 
         return result
@@ -144,9 +140,7 @@ object LoggingInterceptor {
             if (logBodies) {
                 val responseBody = response.body
                 if (responseBody != null) {
-                    val source = responseBody.source()
-                    source.request(Long.MAX_VALUE)
-                    val bodyText = source.getBuffer().readUtf8()
+                    val bodyText = responseBody.string()
 
                     // Truncate long bodies
                     val truncatedBody = if (bodyText.length > 500) {
