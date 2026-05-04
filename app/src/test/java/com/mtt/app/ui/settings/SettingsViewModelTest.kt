@@ -71,7 +71,7 @@ class SettingsViewModelTest {
         every { secureStorage.getApiKey("openai_model") } returns "gpt-4o"
         every { secureStorage.getApiKey("anthropic_model") } returns "claude-3-5-sonnet-20241022"
         
-        val viewModel = SettingsViewModel(secureStorage, openAiClient, anthropicClient)
+        val viewModel = SettingsViewModel(secureStorage, httpClientFactory)
         val state = viewModel.uiState.value
         
         assertEquals("saved-openai-key", state.openAiSettings.apiKey)

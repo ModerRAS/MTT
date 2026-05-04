@@ -34,7 +34,7 @@ object RetryPolicy {
      * @param attempt The current attempt number (1-based)
      * @return true if the request should be retried, false otherwise
      */
-    suspend fun shouldRetry(response: Response, attempt: Int): Boolean {
+    fun shouldRetry(response: Response, attempt: Int): Boolean {
         // Don't retry if we've exceeded max attempts
         if (attempt >= MAX_RETRIES) return false
 

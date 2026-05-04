@@ -425,12 +425,6 @@ data class ProviderSettings(
 }
 
 /**
- * Type aliases for backward compatibility.
- */
-typealias OpenAiSettings = ProviderSettings
-typealias AnthropicSettings = ProviderSettings
-
-/**
  * Test connection state.
  */
 sealed class TestConnectionState {

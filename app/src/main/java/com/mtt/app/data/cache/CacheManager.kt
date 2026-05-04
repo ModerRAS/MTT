@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Hit/miss tracking and insertion timestamps are maintained in-memory
  * since [CacheItemEntity] has no dedicated timestamp column.
+ *
+ * Provided via [RepositoryModule]; constructor-injected dependencies
+ * ([CacheItemDao]) are satisfied by [DatabaseModule].
  */
 class CacheManager(
     private val cacheItemDao: CacheItemDao,
@@ -158,6 +161,18 @@ class CacheManager(
         misses.set(0)
         insertionTimes.clear()
         nextSequentialIndex.set(0)
+    }
+
+    /**
+     * Export all translations as a Map<String, String> for JSON export.
+     * Returns source text as key and translated text as value.
+     * Only includes entries with non-blank translated text.
+     */
+    suspend fun exportToJson(projectId: String = cacheProjectId): Map<String, String> {
+        val allItems = cacheItemDao.getByProjectId(projectId)
+        return allItems
+            .filter { it.translatedText.isNotBlank() }
+            .associate { it.sourceText to it.translatedText }
     }
 
     // ---- internal helpers ----

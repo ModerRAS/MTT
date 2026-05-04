@@ -128,7 +128,7 @@ private fun SettingsScreenContent(
             // Anthropic Settings Section
             ProviderSettingsSection(
                 title = "Anthropic",
-                settings = uiState.anthropicSettings as ProviderSettings,
+                settings = uiState.anthropicSettings,
                 onApiKeyChange = onAnthropicApiKeyChange,
                 onBaseUrlChange = onAnthropicBaseUrlChange,
                 onModelChange = onAnthropicModelChange,

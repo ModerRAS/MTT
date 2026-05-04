@@ -17,20 +17,22 @@ sealed interface Result<out T> {
 /**
  * Transforms the success value.
  */
+@Suppress("UNCHECKED_CAST")
 inline fun <T, R> Result<T>.map(transform: (T) -> R): Result<R> {
     return when (this) {
         is Result.Success -> Result.Success(transform(data))
-        is Result.Failure -> this
+        is Result.Failure -> this as Result<R>
     }
 }
 
 /**
  * Chains to another Result.
  */
+@Suppress("UNCHECKED_CAST")
 inline fun <T, R> Result<T>.flatMap(transform: (T) -> Result<R>): Result<R> {
     return when (this) {
         is Result.Success -> transform(data)
-        is Result.Failure -> this
+        is Result.Failure -> this as Result<R>
     }
 }
 

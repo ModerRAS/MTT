@@ -118,7 +118,7 @@ class AuthInterceptor private constructor(
          * Create auth interceptor for Anthropic API.
          * Adds: x-api-key: {apiKey} and anthropic-version: 2023-06-01
          */
-        fun forAnthropic(apiKey: String): AuthInterceptor {
+        fun forAnthropic(apiKey: String): Interceptor {
             return AnthropicAuthInterceptor(apiKey)
         }
     }

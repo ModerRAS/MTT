@@ -15,6 +15,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -53,7 +54,7 @@ class TranslationViewModelTest {
 
     // ── Test fixtures ─────────────────────────────
 
-    private val testUri = Uri.parse("file:///test/source.txt")
+    private val testUri: Uri = mockk(relaxed = true)
     private val testLines = listOf("Hello", "World", "Test")
     private val testFileContent = testLines.joinToString("\n")
 
@@ -185,6 +186,7 @@ class TranslationViewModelTest {
     @Test
     fun `onStartTranslation transitions Idle → Translating → Completed`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
@@ -205,6 +207,7 @@ class TranslationViewModelTest {
     @Test
     fun `onStartTranslation emits Translating with Progress events`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         val events = mutableListOf<TranslationUiState>()
 
@@ -215,7 +218,7 @@ class TranslationViewModelTest {
         )
 
         // Collect state changes
-        val job = kotlinx.coroutines.launch(testDispatcher) {
+        val job = backgroundScope.launch {
             viewModel.uiState.collect { events.add(it) }
         }
 
@@ -223,7 +226,7 @@ class TranslationViewModelTest {
         advanceUntilIdle()
         job.cancel()
 
-        assertTrue(events.any { it is TranslationUiState.Translating }, "Should contain Translating state")
+        assertTrue("Should contain Translating state", events.any { it is TranslationUiState.Translating })
         assertEquals(TranslationUiState.Completed, events.last())
     }
 
@@ -234,6 +237,7 @@ class TranslationViewModelTest {
     @Test
     fun `onStartTranslation transitions to Error on BatchResult Failure`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
@@ -251,6 +255,7 @@ class TranslationViewModelTest {
     @Test
     fun `onStartTranslation handles Flow exception gracefully`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
@@ -271,6 +276,7 @@ class TranslationViewModelTest {
     @Test
     fun `onStartTranslation handles Retrying events`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 2),
@@ -283,7 +289,7 @@ class TranslationViewModelTest {
         advanceUntilIdle()
 
         val progress = viewModel.progress.value
-        assertTrue(progress.status.contains("Retrying"), "Status should mention retrying: ${progress.status}")
+        assertTrue("Status should mention retrying: ${progress.status}", progress.status.contains("Retrying"))
         assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
     }
 
@@ -294,6 +300,7 @@ class TranslationViewModelTest {
     @Test
     fun `onPauseTranslation cancels translation and returns to Idle`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         // Emit started but never finish — flow is suspended
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
@@ -318,6 +325,7 @@ class TranslationViewModelTest {
     @Test
     fun `onResumeTranslation restarts full pipeline`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
@@ -339,6 +347,7 @@ class TranslationViewModelTest {
     fun `onExportResult writes file and emits Completed`() = runTest {
         // First, complete a translation to populate translatedResults
         loadTestTexts()
+        advanceUntilIdle()
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
             BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 42)
@@ -348,7 +357,7 @@ class TranslationViewModelTest {
         assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
 
         // Now test export
-        val exportUri = Uri.parse("file:///output/result.txt")
+        val exportUri = mockk<Uri>(relaxed = true)
         val outputStream = ByteArrayOutputStream()
         every { contentResolver.openOutputStream(exportUri) } returns outputStream
 
@@ -366,7 +375,7 @@ class TranslationViewModelTest {
 
     @Test
     fun `onExportResult emits Error when output stream fails`() = runTest {
-        val exportUri = Uri.parse("file:///output/fail.txt")
+        val exportUri = mockk<Uri>(relaxed = true)
         every { contentResolver.openOutputStream(exportUri) } returns null
 
         viewModel.onExportResult(exportUri)
@@ -406,7 +415,7 @@ class TranslationViewModelTest {
         assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
 
         // 4. Export
-        val exportUri = Uri.parse("file:///output/result.txt")
+        val exportUri = mockk<Uri>(relaxed = true)
         val outputStream = ByteArrayOutputStream()
         every { contentResolver.openOutputStream(exportUri) } returns outputStream
 
@@ -418,6 +427,7 @@ class TranslationViewModelTest {
     @Test
     fun `pause and resume during translation`() = runTest {
         loadTestTexts()
+        advanceUntilIdle()
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
@@ -451,6 +461,7 @@ class TranslationViewModelTest {
     fun `selecting new file resets progress`() = runTest {
         // First translation
         loadTestTexts()
+        advanceUntilIdle()
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
             BatchResult.Success(batchIndex = 0, items = listOf("A", "B", "C"), tokensUsed = 10)
@@ -462,7 +473,7 @@ class TranslationViewModelTest {
         // Select new file
         val newContent = "One\nTwo\nThree\nFour\nFive"
         mockFileInputStream(newContent)
-        viewModel.onFileSelected(Uri.parse("file:///test/new.txt"))
+        viewModel.onFileSelected(mockk<Uri>(relaxed = true))
         advanceUntilIdle()
 
         assertEquals(5, viewModel.progress.value.totalItems)
@@ -479,12 +490,11 @@ class TranslationViewModelTest {
     }
 
     /** Load test texts by mocking the file read inside [onFileSelected]. */
-    private suspend fun loadTestTexts(uri: Uri = testUri) {
+    private fun loadTestTexts(uri: Uri = testUri) {
         mockFileInputStream(testFileContent)
         viewModel.onFileSelected(uri)
-        advanceUntilIdle()
         // Reset the mock so subsequent calls don't leak
-        every { contentResolver.openInputStream(any()) } returnsAnswer {
+        every { contentResolver.openInputStream(any()) } answers {
             throw IOException("Unexpected file read in test")
         }
     }

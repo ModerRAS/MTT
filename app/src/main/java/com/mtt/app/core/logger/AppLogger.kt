@@ -2,6 +2,7 @@ package com.mtt.app.core.logger
 
 import android.app.Application
 import android.util.Log
+import com.mtt.app.BuildConfig
 import timber.log.Timber
 import java.io.File
 import java.io.PrintWriter
@@ -55,7 +56,7 @@ object AppLogger {
      */
     private class DebugTree : Timber.DebugTree() {
         override fun createStackElementTag(element: StackTraceElement): String {
-            return super.createStackElementTag(element).substringAfterLast('.')
+            return super.createStackElementTag(element)?.substringAfterLast('.') ?: element.className
         }
     }
 

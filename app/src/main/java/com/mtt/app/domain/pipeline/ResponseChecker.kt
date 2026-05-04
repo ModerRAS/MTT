@@ -55,7 +55,10 @@ object ResponseChecker {
         expectedCount: Int
     ): ValidationResult {
         // 1. Check for refusal
-        if (isRefusal(response)) {
+        //    Skip refusal check when no translations are expected —
+        //    an empty/blank response is the correct answer for expectedCount=0.
+        val skipRefusal = expectedCount == 0
+        if (!skipRefusal && isRefusal(response)) {
             return ValidationResult.Refused
         }
 
@@ -95,10 +98,12 @@ object ResponseChecker {
         "i'm not able to translate",
         "i am not able to translate",
         "unable to translate",
+        "unable to help",
         "cannot comply with",
         "can't comply with",
         "i'm sorry",
         "i am sorry",
+        "sorry",
         "i apologize",
         "as an ai",
         "as a language model",

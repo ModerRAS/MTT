@@ -4,8 +4,6 @@ import android.util.Log
 import okhttp3.Interceptor
 import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.Response
-import java.util.regex.Pattern
-
 /**
  * Logging interceptor for OkHttp requests.
  *
@@ -22,14 +20,13 @@ object LoggingInterceptor {
 
     private const val TAG = "OkHttp"
 
-    /** Patterns that match sensitive data that should be redacted */
     private val SENSITIVE_PATTERNS = listOf(
-        Pattern.compile("Bearer\\s+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("x-api-key[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("api[_-]?key[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("token[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("secret[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("password[:\\s]+[^\\s,]+", Pattern.CASE_INSENSITIVE),
+        Regex("Bearer\\s+[\\w\\-.]+", RegexOption.IGNORE_CASE),
+        Regex("x-api-key[:\\s]+[\\w\\-.]+", RegexOption.IGNORE_CASE),
+        Regex("api[_-]?key[:\\s]+[\\w\\-.]+", RegexOption.IGNORE_CASE),
+        Regex("token[:\\s]+[\\w\\-.]+", RegexOption.IGNORE_CASE),
+        Regex("secret[:\\s]+[\\w\\-.]+", RegexOption.IGNORE_CASE),
+        Regex("password[:\\s]+[^\\s,]+", RegexOption.IGNORE_CASE),
     )
 
     /**
@@ -84,13 +81,12 @@ object LoggingInterceptor {
         var result = message
 
         SENSITIVE_PATTERNS.forEach { pattern ->
-            result = pattern.matcher(result).replaceAll(Matcher.Replacement { matchResult ->
-                val match = matchResult.group()
-                // Keep the key, redact the value
+            result = pattern.replace(result) { matchResult ->
+                val match = matchResult.value
                 val separator = if (match.contains(":")) ":" else " "
                 val key = match.substringBefore(separator)
                 "$key: [REDACTED]"
-            })
+            }
         }
 
         return result

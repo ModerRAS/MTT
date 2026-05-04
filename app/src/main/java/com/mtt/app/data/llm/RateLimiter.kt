@@ -76,10 +76,6 @@ class RateLimiter(
             "RPM limit reached, no slot available within ${timeoutMs}ms"
         )
 
-        if (!acquiredRpm) {
-            throw RateLimitException("RPM limit: no semaphore permit available")
-        }
-
         // Acquire TPM slot
         val acquiredTpm = withTimeoutOrNull(timeoutMs) {
             tpmSemaphore.withPermit {
@@ -91,10 +87,6 @@ class RateLimiter(
         } ?: throw RateLimitException(
             "TPM limit reached, no slot available within ${timeoutMs}ms"
         )
-
-        if (!acquiredTpm) {
-            throw RateLimitException("TPM limit: no semaphore permit available")
-        }
     }
 
     /**

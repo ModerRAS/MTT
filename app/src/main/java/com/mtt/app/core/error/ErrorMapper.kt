@@ -2,7 +2,6 @@ package com.mtt.app.core.error
 
 import java.io.IOException
 import java.net.SocketTimeoutException
-import kotlinx.serialization.json.JsonException
 
 /**
  * Maps throwables to user-friendly Chinese messages.
@@ -20,8 +19,6 @@ object ErrorMapper {
             }
 
             is HttpException -> mapHttpException(throwable)
-
-            is JsonException -> "数据格式错误"
 
             else -> "未知错误: ${throwable.message ?: "未知原因"}"
         }
@@ -62,6 +59,6 @@ object ErrorMapper {
  * Wrapper for OkHttp HttpException (if using Retrofit with okHttp)
  */
 class HttpException(private val response: okhttp3.Response) : Exception() {
-    fun code() = response.code()
-    fun message() = response.message()
+    fun code() = response.code
+    fun message() = response.message
 }
