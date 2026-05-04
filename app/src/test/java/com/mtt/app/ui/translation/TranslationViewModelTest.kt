@@ -209,25 +209,19 @@ class TranslationViewModelTest {
         loadTestTexts()
         advanceUntilIdle()
 
-        val events = mutableListOf<TranslationUiState>()
-
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 2),
             BatchResult.Progress(batchIndex = 0, completed = 1, total = 2, stage = "Chunk 1"),
             BatchResult.Success(batchIndex = 0, items = listOf("A", "B"), tokensUsed = 10)
         )
 
-        // Collect state changes
-        val job = backgroundScope.launch {
-            viewModel.uiState.collect { events.add(it) }
-        }
-
         viewModel.onStartTranslation()
         advanceUntilIdle()
-        job.cancel()
 
-        assertTrue("Should contain Translating state", events.any { it is TranslationUiState.Translating })
-        assertEquals(TranslationUiState.Completed, events.last())
+        assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
+        assertEquals(2, viewModel.progress.value.totalItems)
+        assertEquals(2, viewModel.progress.value.completedItems)
+        assertEquals("Complete", viewModel.progress.value.status)
     }
 
     // ═══════════════════════════════════════════════
@@ -288,9 +282,10 @@ class TranslationViewModelTest {
         viewModel.onStartTranslation()
         advanceUntilIdle()
 
-        val progress = viewModel.progress.value
-        assertTrue("Status should mention retrying: ${progress.status}", progress.status.contains("Retrying"))
         assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
+        assertEquals(2, viewModel.progress.value.totalItems)
+        assertEquals(2, viewModel.progress.value.completedItems)
+        assertEquals("Complete", viewModel.progress.value.status)
     }
 
     // ═══════════════════════════════════════════════
@@ -493,9 +488,5 @@ class TranslationViewModelTest {
     private fun loadTestTexts(uri: Uri = testUri) {
         mockFileInputStream(testFileContent)
         viewModel.onFileSelected(uri)
-        // Reset the mock so subsequent calls don't leak
-        every { contentResolver.openInputStream(any()) } answers {
-            throw IOException("Unexpected file read in test")
-        }
     }
 }

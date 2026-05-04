@@ -367,19 +367,18 @@ class SettingsViewModel @Inject constructor(
         if (url.isBlank()) {
             return "URL cannot be empty"
         }
-        
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return "URL must start with http:// or https://"
+        }
         return try {
             val uri = java.net.URI(url)
-            val scheme = uri.scheme
-            if (scheme != "http" && scheme != "https") {
-                "URL must start with http:// or https://"
-            } else if (uri.host.isNullOrBlank()) {
+            if (uri.host.isNullOrBlank()) {
                 "URL must have a valid host"
             } else {
                 null
             }
         } catch (e: Exception) {
-            "Invalid URL format"
+            "URL must have a valid host"
         }
     }
 }
