@@ -1,0 +1,98 @@
+name: Nightly Build
+
+on:
+  schedule:
+    # Run at 02:00 UTC (10:00 北京时间)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build API ${{ matrix.api }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 34]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Accept licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Run lint
+        run: ./gradlew lint
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtt-debug-${{ matrix.api }}-${{ github.run_date }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/reports/lint-results-debug.html
+          retention-days: 7
+
+      - name: Upload test report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtt-test-report-${{ matrix.api }}-${{ github.run_date }}
+          path: app/build/reports/tests/testDebugUnitTest/
+          retention-days: 7
+
+      - name: Generate build metrics
+        run: |
+          echo "### Build Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+          APK_SIZE=$(du -h app/build/outputs/apk/debug/*.apk | cut -f1)
+          echo "| APK Size (API ${{ matrix.api }}) | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
+          TEST_COUNT=$(find app/build/reports/tests/testDebugUnitTest -name "*.html" -exec grep -oP '\d+(?= tests)' {} + 2>/dev/null | head -1 || echo "N/A")
+          echo "| Test Count (API ${{ matrix.api }}) | $TEST_COUNT |" >> $GITHUB_STEP_SUMMARY
+
+  notify-on-failure:
+    needs: build
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create failure issue
+        uses: actions/create-github-issue@v1
+        with:
+          title: '[Nightly Build] Build failed'
+          body: |
+            Nightly build failed on ${{ github.run_date }}.
+
+            See the workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please investigate and fix the issues.
+          labels: 'build-failure,nightly-build'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
