@@ -24,6 +24,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.mtt.app.ui.glossary.GlossaryScreen
+import com.mtt.app.ui.result.ResultScreen
 import com.mtt.app.ui.settings.SettingsScreen
 import com.mtt.app.ui.translation.TranslationScreen
 
@@ -102,6 +103,9 @@ fun AppNavHost(
             }
             composable("settings") {
                 SettingsScreen()
+            }
+            composable("result") {
+                ResultScreen()
             }
         }
     }

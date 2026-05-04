@@ -51,6 +51,7 @@ class TranslationService : Service() {
     @Inject lateinit var okHttpClient: OkHttpClient
     @Inject lateinit var rateLimiter: RateLimiter
     @Inject lateinit var cacheManager: CacheManager
+    @Inject lateinit var executor: TranslationExecutor
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var translationJob: Job? = null
@@ -106,8 +107,6 @@ class TranslationService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         translationJob = serviceScope.launch {
-            val executor = TranslationExecutor(okHttpClient, rateLimiter)
-
             // Periodic notification updater (every 5 seconds)
             val updaterJob = launch {
                 while (isActive) {

@@ -49,8 +49,8 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Run unit tests (exclude Robolectric/Hilt tests)
-        run: ./gradlew testDebugUnitTest --no-daemon --tests "!*TranslationServiceTest" --tests "!*ViewModelTest"
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Run lint
         run: ./gradlew lint --no-daemon
