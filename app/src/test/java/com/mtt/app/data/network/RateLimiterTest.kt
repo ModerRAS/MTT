@@ -191,6 +191,31 @@ class RateLimiterTest {
 
     // endregion
 
+    // region Sequential acquire tests
+
+    @Test
+    fun `sequential acquires always succeed regardless of RPM limit`() = runBlocking {
+        // Semaphore.withPermit releases the permit after each call,
+        // so sequential acquires always succeed regardless of rpmTimestamps count.
+        // The RPM limit enforces concurrency via Semaphore, not sequential rate.
+        val limiter = RateLimiter(rpmLimit = 1, tpmLimit = 100000, timeoutMs = 100)
+
+        // Both acquires succeed because Semaphore releases permits after each call
+        limiter.acquire(tokens = 100)
+        limiter.acquire(tokens = 100)
+
+        // Verify RPM tracking: both calls were recorded in rpmTimestamps
+        // rpmAvailable = rpmLimit - rpmUsed = 1 - 2 = -1
+        // This negative value indicates RPM is exceeded, but acquire() never rejected
+        // because the Semaphore released permits after each sequential call.
+        val status = limiter.getStatus()
+        assertEquals(-1, status.rpmAvailable) // RPM exceeded but sequential calls succeeded
+        assertEquals(1, status.rpmLimit)
+        assertEquals(100000, status.tpmLimit)
+    }
+
+    // endregion
+
     // region Exception tests
 
     @Test

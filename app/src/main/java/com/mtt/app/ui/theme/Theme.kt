@@ -120,6 +120,7 @@ fun MttTheme(
     // Set status bar and navigation bar colors
     val view = LocalView.current
     if (!view.isInEditMode) {
+        @Suppress("DEPRECATION")
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()

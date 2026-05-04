@@ -159,4 +159,71 @@ class TranslationExecutorTest {
         assertTrue("Should have Success or Failure",
             successEvents.isNotEmpty() || failureEvents.isNotEmpty())
     }
+
+    // ═══════════════════════════════════════════════
+    //  Test 6: PROOFREAD mode flow
+    // ═══════════════════════════════════════════════
+
+    @Test
+    fun `executeBatch with PROOFREAD mode produces correct flow sequence`() = runBlocking {
+        val proofreadConfig = testConfig.copy(
+            mode = TranslationMode.PROOFREAD
+        )
+        val texts = listOf("First text", "Second text")
+        val results = executor.executeBatch(texts, proofreadConfig).toList()
+
+        // Should have Started event with correct count
+        val started = results.filterIsInstance<BatchResult.Started>()
+        assertEquals(1, started.size)
+        assertEquals(2, started[0].size)
+
+        // Final result should be Success or Failure
+        val last = results.last()
+        assertTrue("Last result should be Success or Failure, was $last",
+            last is BatchResult.Success || last is BatchResult.Failure)
+    }
+
+    // ═══════════════════════════════════════════════
+    //  Test 7: POLISH mode flow
+    // ═══════════════════════════════════════════════
+
+    @Test
+    fun `executeBatch with POLISH mode produces correct flow sequence`() = runBlocking {
+        val polishConfig = testConfig.copy(
+            mode = TranslationMode.POLISH
+        )
+        val texts = listOf("Text to polish", "Another text")
+        val results = executor.executeBatch(texts, polishConfig).toList()
+
+        // Should have Started event
+        val started = results.filterIsInstance<BatchResult.Started>()
+        assertEquals(1, started.size)
+        assertEquals(2, started[0].size)
+
+        // Final result should be Success or Failure
+        val last = results.last()
+        assertTrue("Last result should be Success or Failure, was $last",
+            last is BatchResult.Success || last is BatchResult.Failure)
+    }
+
+    // ═══════════════════════════════════════════════
+    //  Test 8: Empty texts - no Started event
+    // ═══════════════════════════════════════════════
+
+    @Test
+    fun `executeBatch with empty texts returns Success with 0 items and no Started`() = runBlocking {
+        val results = executor.executeBatch(emptyList(), testConfig).toList()
+
+        // Exactly 1 result
+        assertEquals(1, results.size)
+
+        // Result is Success with 0 items
+        val first = results[0]
+        assertTrue("Expected BatchResult.Success but was $first", first is BatchResult.Success)
+        assertEquals(0, (first as BatchResult.Success).items.size)
+
+        // No Started event emitted for empty list
+        val started = results.filterIsInstance<BatchResult.Started>()
+        assertEquals(0, started.size)
+    }
 }
