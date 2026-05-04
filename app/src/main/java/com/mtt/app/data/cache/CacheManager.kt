@@ -135,7 +135,7 @@ class CacheManager(
         val expired = allItems.filter { item ->
             val key = insertionTimeKey(item.sourceText, item.model)
             val insertedAt = insertionTimes[key]
-            insertedAt != null && insertedAt.isBefore(cutoff)
+            insertedAt != null && !insertedAt.isAfter(cutoff)
         }
 
         expired.forEach { item ->
