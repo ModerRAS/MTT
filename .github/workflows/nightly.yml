@@ -43,14 +43,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Run unit tests
-        run: ./gradlew test
+        run: ./gradlew test --no-daemon
 
       - name: Run lint
-        run: ./gradlew lint
+        run: ./gradlew lint --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -73,26 +76,7 @@ jobs:
           echo "### Build Metrics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
-          APK_SIZE=$(du -h app/build/outputs/apk/debug/*.apk | cut -f1)
+          APK_SIZE=$(du -h app/build/outputs/apk/debug/*.apk 2>/dev/null | cut -f1 || echo "N/A")
           echo "| APK Size (API ${{ matrix.api }}) | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
           TEST_COUNT=$(find app/build/reports/tests/testDebugUnitTest -name "*.html" -exec grep -oP '\d+(?= tests)' {} + 2>/dev/null | head -1 || echo "N/A")
           echo "| Test Count (API ${{ matrix.api }}) | $TEST_COUNT |" >> $GITHUB_STEP_SUMMARY
-
-  notify-on-failure:
-    needs: build
-    if: failure()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create failure issue
-        uses: actions/create-github-issue@v1
-        with:
-          title: '[Nightly Build] Build failed'
-          body: |
-            Nightly build failed on ${{ github.run_date }}.
-
-            See the workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            Please investigate and fix the issues.
-          labels: 'build-failure,nightly-build'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
