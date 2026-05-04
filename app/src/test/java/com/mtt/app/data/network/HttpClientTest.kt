@@ -5,6 +5,9 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +16,8 @@ import org.junit.Assert.assertTrue
 /**
  * Unit tests for HttpClientFactory and related interceptors.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class HttpClientTest {
 
     private lateinit var server: MockWebServer
