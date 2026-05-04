@@ -108,6 +108,7 @@ class ResultViewModel @Inject constructor(
                             model = ""
                         )
                     }
+                    .filter { it.translatedText.isNotBlank() }
                 _allItems.update { items }
                 _uiState.update { ResultUiState.Success(items) }
             } catch (e: Exception) {
