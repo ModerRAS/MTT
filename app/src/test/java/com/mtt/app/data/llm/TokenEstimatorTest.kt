@@ -55,18 +55,18 @@ class TokenEstimatorTest {
 
     @Test
     fun estimate_pureAsciiLongText_returnsCorrectEstimation() {
-        // 40 ASCII chars = 10 tokens
+        // 45 ASCII chars, 45/4 = 11.25, ceil = 12
         val text = "The quick brown fox jumps over the lazy dog. "
         val result = TokenEstimator.estimate(text)
-        assertEquals(10, result)
+        assertEquals(12, result)
     }
 
     @Test
     fun estimate_koreanText_returnsCorrectEstimation() {
         // Korean characters (ac00-d7af) = 2 chars/token
-        // 4 Korean chars = 2 tokens
+        // "안녕하세요" = 5 chars, ceil(5/2) = 3
         val result = TokenEstimator.estimate("안녕하세요")
-        assertEquals(2, result)
+        assertEquals(3, result)
     }
 
     // endregion
@@ -75,32 +75,32 @@ class TokenEstimatorTest {
 
     @Test
     fun estimateBatch_singleText_calculatesCorrectTotal() {
-        // textTokens = estimate("Hello") = 1
-        // systemTokens = estimate("System prompt") = 4
-        // prefixTokens = 1 * estimate("Translate: ") = 1
+        // textTokens = estimate("Hello") = ceil(5/4) = 2
+        // systemTokens = estimate("System prompt") = ceil(13/4) = 4
+        // prefixTokens = 1 * estimate("Translate: ") = ceil(11/4) = 3
         // overhead = 100
-        // Total = 1 + 4 + 1 + 100 = 106
+        // Total = 2 + 4 + 3 + 100 = 109
         val result = TokenEstimator.estimateBatch(
             texts = listOf("Hello"),
             systemPrompt = "System prompt",
             userPromptPrefix = "Translate: "
         )
-        assertEquals(106, result)
+        assertEquals(109, result)
     }
 
     @Test
     fun estimateBatch_multipleTexts_sumsAllComponents() {
-        // textTokens = estimate("Hi") + estimate("Bye") = 1 + 1 = 2
-        // systemTokens = estimate("System") = 2
-        // prefixTokens = 2 * estimate("Pre: ") = 2 * 1 = 2
+        // textTokens = estimate("Hi") + estimate("Bye") = ceil(2/4) + ceil(3/4) = 1 + 1 = 2
+        // systemTokens = estimate("System") = ceil(6/4) = 2
+        // prefixTokens = 2 * estimate("Pre: ") = 2 * ceil(5/4) = 2 * 2 = 4
         // overhead = 100
-        // Total = 2 + 2 + 2 + 100 = 106
+        // Total = 2 + 2 + 4 + 100 = 108
         val result = TokenEstimator.estimateBatch(
             texts = listOf("Hi", "Bye"),
             systemPrompt = "System",
             userPromptPrefix = "Pre: "
         )
-        assertEquals(106, result)
+        assertEquals(108, result)
     }
 
     @Test

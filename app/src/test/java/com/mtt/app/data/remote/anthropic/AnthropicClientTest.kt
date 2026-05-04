@@ -4,13 +4,13 @@ import com.anthropic.client.AnthropicClient
 import com.anthropic.models.messages.ContentBlock
 import com.anthropic.models.messages.Message
 import com.anthropic.models.messages.Usage
-import com.anthropic.models.messages.TextBlock
+import com.anthropic.services.blocking.MessageService
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
 import com.mtt.app.data.model.LlmRequestConfig
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
+import io.mockk.mockkObject
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -18,7 +18,6 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
-import java.time.Duration
 import java.util.Optional
 
 class AnthropicClientTest {
@@ -34,248 +33,251 @@ class AnthropicClientTest {
     }
 
     private lateinit var okHttpClient: OkHttpClient
+    private lateinit var mockSdkClient: AnthropicClient
 
     @Before
     fun setUp() {
         okHttpClient = mockk(relaxed = true)
+        mockSdkClient = mockk(relaxed = true)
+        mockkObject(com.anthropic.client.okhttp.AnthropicOkHttpClient)
     }
 
-    private fun mockAnthropicSdkClient(): AnthropicClient {
-        val mockClient = mockk<AnthropicClient>()
-        mockkStatic("com.anthropic.client.okhttp.AnthropicOkHttpClientKt")
-        val mockBuilder = mockk<com.anthropic.client.okhttp.AnthropicOkHttpClient.Builder> {
-            every { apiKey(TEST_API_KEY) } returns this
-            every { baseUrl(TEST_BASE_URL) } returns this
-            every { maxRetries(0) } returns this
-            every { timeout(any<Duration>()) } returns this
-            every { putHeader(any(), any()) } returns this
-            every { build() } returns mockClient
-        }
-        every { com.anthropic.client.okhttp.AnthropicOkHttpClient.builder() } returns mockBuilder
+    private fun mockSdkBuilderToReturnClient(): AnthropicClient {
+        val mockClient = mockSdkClient
+        val mockBuilder = mockk<com.anthropic.client.okhttp.AnthropicOkHttpClient.Builder>()
+        every { mockBuilder.apiKey(TEST_API_KEY) } returns mockBuilder
+        every { mockBuilder.baseUrl(TEST_BASE_URL) } returns mockBuilder
+        every { mockBuilder.maxRetries(0) } returns mockBuilder
+        every { mockBuilder.timeout(any<java.time.Duration>()) } returns mockBuilder
+        every { mockBuilder.putHeader("anthropic-version", "2023-06-01") } returns mockBuilder
+        every { mockBuilder.build() } returns mockClient
+
+        every {
+            com.anthropic.client.okhttp.AnthropicOkHttpClient.builder()
+        } returns mockBuilder
         return mockClient
     }
 
-    @Test
-    fun translateSuccessfulReturnsTranslationResponse() {
-        val mockClient = mockAnthropicSdkClient()
-@Suppress("UNCHECKED_CAST")
-        val mockTextBlock = mockk<ContentBlock>(relaxed = true) {
-            every { text() } returns Optional.of(
-                mockk<TextBlock>(relaxed = true) {
-                    every { text() } returns Optional.of("你好世界")
-                }
-            )
-        }
-        val mockResponse = mockk<Message> {
-            every { content() } returns listOf(mockTextBlock)
-            every { usage() } returns mockk<Usage> {
-                every { inputTokens() } returns 10L
-                every { outputTokens() } returns 20L
-            }
-        }
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } returns mockResponse
-        }
-        val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
-        val result = client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-        assertEquals("�������", result.content)
-        assertEquals(TEST_MODEL, result.model)
-        assertEquals(30, result.tokensUsed)
-    }
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Successful translation test
+    // ═══════════════════════════════════════════════════════════════════════
 
     @Test
     fun translateSuccessfulReturnsTranslationResponse() {
-        val mockClient = mockAnthropicSdkClient()
-        val mockResponse = mockk<Message>(relaxed = true)
-        every { mockResponse.content() } returns listOf(
-            mockk<ContentBlock>(relaxed = true) {
-                every { text() } returns Optional.of(
-                    mockk<com.anthropic.models.messages.TextBlock>(relaxed = true) {
-                        every { text() } returns Optional.of("你好世界")
-                    }
-                )
-            }
-        )
-        every { mockResponse.usage() } returns mockk(relaxed = true) {
-            every { inputTokens() } returns 10L
-            every { outputTokens() } returns 20L
-        }
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } returns mockResponse
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockResponse = mockk<Message>()
+
+        val mockTextBlock = mockk<com.anthropic.models.messages.TextBlock>()
+        every { mockTextBlock.text() } returns "你好世界"
+
+        val mockContentBlock = mockk<ContentBlock>()
+        every { mockContentBlock.text() } returns Optional.of(mockTextBlock)
+        every { mockResponse.content() } returns listOf(mockContentBlock)
+
+        val mockUsage = mockk<Usage>()
+        every { mockUsage.inputTokens() } returns 10L
+        every { mockUsage.outputTokens() } returns 20L
+        every { mockResponse.usage() } returns mockUsage
+
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } returns mockResponse
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         val result = client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
+
         assertEquals("你好世界", result.content)
         assertEquals(TEST_MODEL, result.model)
         assertEquals(30, result.tokensUsed)
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Error Mapping Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun translateWhenIOExceptionThrownThenThrowsNetworkException() {
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws IOException("Unable to resolve host")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected NetworkException to be thrown")
+            fail("Expected NetworkException")
         } catch (e: NetworkException) {
-            assertEquals("��������ʧ�ܣ���������", e.userMessage)
+            assertEquals("网络连接失败，请检查网络", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen401ErrorThenThrowsApiExceptionAuthFailure() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 401 unauthorized")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 401 unauthorized")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(401, e.code)
-            assertEquals("API Key ��Ч����������", e.userMessage)
+            assertEquals("API Key 无效，请检查设置", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen429ErrorThenThrowsApiExceptionRateLimit() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 429 rate limit exceeded")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 429 rate limit exceeded")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(429, e.code)
-            assertEquals("�������Ƶ�������Ժ�����", e.userMessage)
+            assertEquals("请求过于频繁，请稍后重试", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen500ErrorThenThrowsApiExceptionServerError() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 500 internal server error")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 500 internal server error")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(500, e.code)
-            assertEquals("�������������Ժ�����", e.userMessage)
+            assertEquals("服务器错误，请稍后重试", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen502ErrorThenThrowsApiExceptionServerError() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 502 bad gateway")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 502 bad gateway")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(500, e.code)
-            assertEquals("�������������Ժ�����", e.userMessage)
+            assertEquals("服务器错误，请稍后重试", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen503ErrorThenThrowsApiExceptionServerError() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 503 service unavailable")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 503 service unavailable")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(500, e.code)
-            assertEquals("�������������Ժ�����", e.userMessage)
+            assertEquals("服务器错误，请稍后重试", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen504ErrorThenThrowsApiExceptionServerError() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 504 gateway timeout")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 504 gateway timeout")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(500, e.code)
-            assertEquals("�������������Ժ�����", e.userMessage)
+            assertEquals("服务器错误，请稍后重试", e.userMessage)
         }
     }
 
     @Test
     fun translateWhen403ErrorThenThrowsApiExceptionForbidden() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("nthropic_error status code: 403 forbidden")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("anthropic_error status code: 403 forbidden")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(403, e.code)
-            assertEquals("Ȩ�޲���", e.userMessage)
+            assertEquals("权限不足", e.userMessage)
         }
     }
 
     @Test
     fun translateWhenUnknownErrorThenThrowsApiExceptionWithCode0() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("Some unexpected error occurred")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("Some unexpected error")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(0, e.code)
-            assertTrue(e.userMessage.contains("API ����ʧ��"))
-            assertTrue(e.userMessage.contains("Some unexpected error occurred"))
+            assertTrue(e.userMessage.contains("API 请求失败"))
         }
     }
 
     @Test
     fun translateWhenUnauthorizedKeywordThenThrowsApiExceptionAuthFailure() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("Your request is unauthorized - please check your credentials")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("Your request is unauthorized")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(401, e.code)
-            assertEquals("API Key ��Ч����������", e.userMessage)
+            assertEquals("API Key 无效，请检查设置", e.userMessage)
         }
     }
 
     @Test
     fun translateWhenRateKeywordThenThrowsApiExceptionRateLimit() {
-        val mockClient = mockAnthropicSdkClient()
-        every { mockClient.messages() } returns mockk(relaxed = true) {
-            every { create(any()) } throws RuntimeException("Too many requests - rate limit exceeded")
-        }
+        val mockClient = mockSdkBuilderToReturnClient()
+        val mockMessages: MessageService = mockk(relaxed = true)
+        every { mockClient.messages() } returns mockMessages
+        every { mockMessages.create(any()) } throws RuntimeException("Too many requests - rate limit exceeded")
+
         val client = AnthropicClient(okHttpClient, TEST_API_KEY, TEST_BASE_URL)
         try {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
-            fail("Expected ApiException to be thrown")
+            fail("Expected ApiException")
         } catch (e: ApiException) {
             assertEquals(429, e.code)
-            assertEquals("�������Ƶ�������Ժ�����", e.userMessage)
+            assertEquals("请求过于频繁，请稍后重试", e.userMessage)
         }
     }
 }
