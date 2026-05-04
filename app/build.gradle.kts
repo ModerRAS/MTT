@@ -103,7 +103,7 @@ dependencies {
         exclude(group = "org.slf4j")
         exclude(group = "com.google.code.gson")
     }
-    implementation("com.anthropic:anthropic-java:2.20.0") {
+    implementation("com.anthropic:anthropic-java:2.22.0") {
         exclude(group = "org.slf4j")
     }
 
@@ -118,6 +118,8 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.12.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("io.mockk:mockk:1.13.11")
     testImplementation("io.mockk:mockk-agent:1.13.11")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
