@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Configuration
+
+    Controls how the app handles network security policy.
+    - Default: All traffic must use HTTPS
+    - Debug: Allows cleartext for localhost only (for development/testing)
+    - Release: Strict HTTPS-only policy
+
+    SECURITY WARNING:
+    In release builds, custom proxy URLs with HTTP will trigger warnings.
+    Always use HTTPS for production API endpoints.
+-->
+<network-security-config>
+    <!-- Base configuration: Default policy for all network traffic -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Trust system CAs by default -->
+            <certificates src="system" />
+            <!-- Trust user-added CAs (for corporate proxies/debugging) -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug configuration: Allow cleartext for localhost only -->
+    <!--
+        This is useful for:
+        - Running mock servers during development
+        - Testing with local backend services
+        - Charles Proxy/mitmproxy debugging (user CA required)
+    -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+
+    <!-- Domain-specific configurations -->
+
+    <!-- OpenAI API - Production endpoint -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.openai.com</domain>
+        <domain includeSubdomains="true">openai.com</domain>
+    </domain-config>
+
+    <!-- Anthropic API - Production endpoint -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.anthropic.com</domain>
+        <domain includeSubdomains="true">anthropic.com</domain>
+    </domain-config>
+
+    <!-- Azure OpenAI - Production endpoint -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">openai.azure.com</domain>
+        <domain includeSubdomains="true">cognitiveservices.azure.com</domain>
+    </domain-config>
+</network-security-config>

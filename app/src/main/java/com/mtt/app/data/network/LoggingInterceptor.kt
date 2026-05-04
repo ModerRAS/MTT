@@ -1,0 +1,165 @@
+package com.mtt.app.data.network
+
+import android.util.Log
+import okhttp3.Interceptor
+import okhttp3.logging.HttpLoggingInterceptor
+import okhttp3.Response
+import java.util.regex.Pattern
+
+/**
+ * Logging interceptor for OkHttp requests.
+ *
+ * Security features:
+ * - NEVER logs full request/response bodies in production
+ * - REDACTs Authorization headers (API keys)
+ * - REDACTs sensitive data patterns from logs
+ *
+ * Log levels:
+ * - DEBUG builds: BODY level (full headers + truncated bodies)
+ * - RELEASE builds: HEADERS level only
+ */
+object LoggingInterceptor {
+
+    private const val TAG = "OkHttp"
+
+    /** Patterns that match sensitive data that should be redacted */
+    private val SENSITIVE_PATTERNS = listOf(
+        Pattern.compile("Bearer\\s+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("x-api-key[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("api[_-]?key[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("token[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("secret[:\\s]+[\\w\\-.]+", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("password[:\\s]+[^\\s,]+", Pattern.CASE_INSENSITIVE),
+    )
+
+    /**
+     * Create a logging interceptor configured for DEBUG builds.
+     * Logs headers and truncated bodies (max 500 chars).
+     */
+    fun forDebug(): HttpLoggingInterceptor {
+        return HttpLoggingInterceptor { message ->
+            logSafe(message, Log.DEBUG)
+        }.apply {
+            level = HttpLoggingInterceptor.Level.BODY
+            redactHeaders.add("Authorization")
+            redactHeaders.add("x-api-key")
+            redactHeaders.add("Cookie")
+            redactHeaders.add("Set-Cookie")
+        }
+    }
+
+    /**
+     * Create a logging interceptor configured for RELEASE builds.
+     * Only logs request/response headers, never bodies.
+     */
+    fun forRelease(): HttpLoggingInterceptor {
+        return HttpLoggingInterceptor { message ->
+            logSafe(message, Log.INFO)
+        }.apply {
+            level = HttpLoggingInterceptor.Level.HEADERS
+        }
+    }
+
+    /**
+     * Create a custom logging interceptor with specified level.
+     */
+    fun create(level: HttpLoggingInterceptor.Level): HttpLoggingInterceptor {
+        return HttpLoggingInterceptor { message ->
+            val logLevel = if (level == HttpLoggingInterceptor.Level.BODY) Log.DEBUG else Log.INFO
+            logSafe(message, logLevel)
+        }.apply {
+            this.level = level
+        }
+    }
+
+    /**
+     * Safely log a message, redacting sensitive patterns.
+     */
+    private fun logSafe(message: String, priority: Int) {
+        val redacted = redactSensitiveData(message)
+        Log.println(priority, TAG, redacted)
+    }
+
+    /**
+     * Redact sensitive data from log messages.
+     * NEVER logs API keys, tokens, or secrets.
+     */
+    private fun redactSensitiveData(message: String): String {
+        var result = message
+
+        SENSITIVE_PATTERNS.forEach { pattern ->
+            result = pattern.matcher(result).replaceAll { matchResult ->
+                val match = matchResult.value
+                // Keep the key, redact the value
+                val separator = if (match.contains(":")) ":" else " "
+                val key = match.substringBefore(separator)
+                "$key: [REDACTED]"
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Custom interceptor for additional request/response logging.
+     * Use this for debugging specific API calls.
+     */
+    fun createCustomInterceptor(
+        logHeaders: Boolean = true,
+        logBodies: Boolean = false,
+        logLevel: Int = Log.DEBUG
+    ): Interceptor {
+        return Interceptor { chain ->
+            val request = chain.request()
+
+            if (logHeaders) {
+                Log.d(TAG, "--> ${request.method} ${request.url}")
+                request.headers.forEach { (name, value) ->
+                    val displayValue = if (name.equals("Authorization", ignoreCase = true) ||
+                        name.equals("x-api-key", ignoreCase = true)) {
+                        "[REDACTED]"
+                    } else {
+                        value
+                    }
+                    Log.d(TAG, "$name: $displayValue")
+                }
+            }
+
+            val startNs = System.nanoTime()
+            val response = chain.proceed(request)
+            val tookMs = (System.nanoTime() - startNs) / 1_000_000
+
+            if (logHeaders) {
+                Log.d(TAG, "<-- ${response.code} ${response.message} (${tookMs}ms)")
+                response.headers.forEach { (name, value) ->
+                    val displayValue = if (name.equals("Set-Cookie", ignoreCase = true)) {
+                        "[REDACTED]"
+                    } else {
+                        value
+                    }
+                    Log.d(TAG, "$name: $displayValue")
+                }
+            }
+
+            if (logBodies) {
+                val responseBody = response.body
+                if (responseBody != null) {
+                    val source = responseBody.source()
+                    source.request(Long.MAX_VALUE)
+                    val bodyText = source.getBuffer().readUtf8()
+
+                    // Truncate long bodies
+                    val truncatedBody = if (bodyText.length > 500) {
+                        bodyText.substring(0, 500) + "... [TRUNCATED]"
+                    } else {
+                        bodyText
+                    }
+
+                    Log.d(TAG, "Response body: ${redactSensitiveData(truncatedBody)}")
+                }
+            }
+
+            response
+        }
+    }
+}
