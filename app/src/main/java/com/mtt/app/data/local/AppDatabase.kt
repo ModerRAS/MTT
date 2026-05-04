@@ -21,7 +21,7 @@ import com.mtt.app.data.model.ProjectEntity
         GlossaryEntryEntity::class
     ],
     version = 1,
-    exportSchema = true
+    exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {

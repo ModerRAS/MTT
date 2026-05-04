@@ -30,7 +30,6 @@ class DaoTest {
             ApplicationProvider.getApplicationContext(),
             AppDatabase::class.java
         )
-            .addTypeConverter(Converters())
             .build()
         dao = database.cacheItemDao()
     }
