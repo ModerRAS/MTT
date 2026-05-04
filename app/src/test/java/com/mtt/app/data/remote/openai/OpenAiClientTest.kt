@@ -12,12 +12,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.IOException
 
 /**
  * Unit tests for OpenAiClient.
  * Uses MockK to mock the OpenAI Java SDK.
+ * Robolectric enables proper mocking of static SDK builders.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class OpenAiClientTest {
 
     companion object {
@@ -42,13 +48,20 @@ class OpenAiClientTest {
 
     private fun mockSdkBuilderToReturnClient(): com.openai.client.OpenAIClient {
         val mockClient = mockSdkClient
+        val mockBuilder = mockk<com.openai.client.okhttp.OpenAIOkHttpClient.Builder>()
+
+        // Mock all builder methods to return the builder for chaining
+        every { mockBuilder.apiKey(TEST_API_KEY) } returns mockBuilder
+        every { mockBuilder.baseUrl(TEST_BASE_URL) } returns mockBuilder
+        every { mockBuilder.maxRetries(0) } returns mockBuilder
+        every { mockBuilder.timeout(any<java.time.Duration>()) } returns mockBuilder
+        every { mockBuilder.build() } returns mockClient
+
+        // Mock the static builder() method to return our mock builder
         every {
             com.openai.client.okhttp.OpenAIOkHttpClient.builder()
-                .apiKey(TEST_API_KEY)
-                .baseUrl(TEST_BASE_URL)
-                .maxRetries(0)
-                .build()
-        } returns mockClient
+        } returns mockBuilder
+
         return mockClient
     }
 
