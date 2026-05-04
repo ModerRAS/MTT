@@ -17,7 +17,6 @@ import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.llm.RateLimiter
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationProgress
-import com.mtt.app.data.remote.llm.LlmService
 import com.mtt.app.domain.pipeline.BatchResult
 import com.mtt.app.domain.pipeline.TranslationExecutor
 import dagger.hilt.android.AndroidEntryPoint
@@ -33,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 /**
@@ -48,7 +48,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class TranslationService : Service() {
 
-    @Inject lateinit var llmService: LlmService
+    @Inject lateinit var okHttpClient: OkHttpClient
     @Inject lateinit var rateLimiter: RateLimiter
     @Inject lateinit var cacheManager: CacheManager
 
@@ -106,7 +106,7 @@ class TranslationService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         translationJob = serviceScope.launch {
-            val executor = TranslationExecutor(llmService, rateLimiter)
+            val executor = TranslationExecutor(okHttpClient, rateLimiter)
 
             // Periodic notification updater (every 5 seconds)
             val updaterJob = launch {

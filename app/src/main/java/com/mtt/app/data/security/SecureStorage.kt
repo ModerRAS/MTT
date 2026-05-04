@@ -4,17 +4,16 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import javax.inject.Inject
-import javax.inject.Singleton
-
 /**
  * Secure storage for API keys using EncryptedSharedPreferences.
- * 
+ *
  * API keys are encrypted at rest using AES256_GCM encryption scheme.
  * Keys are NEVER logged to logcat for security.
+ *
+ * Provided via [SecurityModule]; do NOT annotate with @Inject to avoid
+ * duplicate binding conflicts.
  */
-@Singleton
-class SecureStorage @Inject constructor(
+class SecureStorage(
     private val context: Context
 ) {
     

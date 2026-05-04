@@ -4,11 +4,14 @@ import android.content.Context
 import android.net.Uri
 import com.mtt.app.core.error.Result
 import com.mtt.app.core.error.StorageException
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNames
 import java.io.OutputStream
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Writes MTool-format flat JSON files via Android SAF (Storage Access Framework).
@@ -33,7 +36,10 @@ import java.io.OutputStream
  * }
  * ```
  */
-class MtoolFileWriter(private val context: Context) {
+@Singleton
+class MtoolFileWriter @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
 
     /**
      * Writes translation data to a SAF URI as flat JSON.

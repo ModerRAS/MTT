@@ -10,12 +10,19 @@ import com.mtt.app.data.model.GlossaryEntryEntity
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationMode
+import com.mtt.app.data.model.LlmProvider
+import com.mtt.app.data.remote.anthropic.AnthropicClient
 import com.mtt.app.data.remote.llm.LlmService
+import com.mtt.app.data.remote.llm.LlmServiceFactory
+import com.mtt.app.data.remote.openai.OpenAiClient
 import com.mtt.app.domain.glossary.GlossaryEngine
 import com.mtt.app.domain.glossary.GlossaryEntry
 import com.mtt.app.domain.prompt.PromptBuilder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import okhttp3.OkHttpClient
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Orchestrates the full translation pipeline:
@@ -27,8 +34,9 @@ import kotlinx.coroutines.flow.flow
  * @param llmService   Provider-specific LLM API client
  * @param rateLimiter  RPM/TPM rate limiter for API quota management
  */
-class TranslationExecutor(
-    private val llmService: LlmService,
+@Singleton
+class TranslationExecutor @Inject constructor(
+    private val okHttpClient: OkHttpClient,
     private val rateLimiter: RateLimiter
 ) {
 
@@ -37,6 +45,35 @@ class TranslationExecutor(
         const val MAX_RETRIES = 3
 
         private const val MIN_BATCH_SIZE = 1
+    }
+
+    /**
+     * The LlmService is created dynamically from [TranslationConfig.model.provider]
+     * at the start of each [executeBatch] call, since the provider (OpenAI / Anthropic)
+     * and API key are determined at runtime by user settings.
+     */
+    private var currentLlmService: LlmService? = null
+
+    /**
+     * Create a provider-specific [LlmService] from the user's config.
+     *
+     * Uses [LlmServiceFactory] to dispatch to the correct implementation,
+     * passing a dummy client for the non-selected provider (the factory
+     * only uses the client matching the selected provider).
+     */
+    private fun createLlmService(provider: LlmProvider): LlmService {
+        return when (provider) {
+            is LlmProvider.OpenAI -> {
+                val openAiClient = OpenAiClient(okHttpClient, provider.apiKey, provider.baseUrl)
+                val dummyAnthropic = AnthropicClient(okHttpClient, "", "")
+                LlmServiceFactory.create(provider, openAiClient, dummyAnthropic)
+            }
+            is LlmProvider.Anthropic -> {
+                val dummyOpenAi = OpenAiClient(okHttpClient, "", "")
+                val anthropicClient = AnthropicClient(okHttpClient, provider.apiKey, provider.baseUrl)
+                LlmServiceFactory.create(provider, dummyOpenAi, anthropicClient)
+            }
+        }
     }
 
     /**
@@ -58,6 +95,9 @@ class TranslationExecutor(
             emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0))
             return@flow
         }
+
+        // Dynamically create the provider-specific LlmService from user config
+        currentLlmService = createLlmService(config.model.provider)
 
         emit(BatchResult.Started(batchIndex = 0, size = texts.size))
 
@@ -259,7 +299,7 @@ class TranslationExecutor(
                 temperature = config.temperature,
                 maxTokens = config.maxTokens
             )
-            llmService.translate(llmConfig)
+            currentLlmService!!.translate(llmConfig)
         } catch (e: ApiException) {
             return ChunkResult(
                 items = emptyList(),
