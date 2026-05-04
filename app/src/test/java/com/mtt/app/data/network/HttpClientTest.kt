@@ -100,15 +100,14 @@ class HttpClientTest {
     fun `createBaseClient has correct default timeouts`() {
         val builder = HttpClientFactory.createBaseClient()
 
-        // Use reflection to check private timeout values via OkHttpClient internals
-        // Instead, verify via actual connection behavior
+        // Compare raw millisecond values to avoid integer rounding issues with Robolectric
         val client = builder.build()
-        assertEquals(HttpClientFactory.CONNECT_TIMEOUT_SECONDS,
-            client.connectTimeoutMillis / 1000)
-        assertEquals(HttpClientFactory.READ_TIMEOUT_SECONDS,
-            client.readTimeoutMillis / 1000)
-        assertEquals(HttpClientFactory.WRITE_TIMEOUT_SECONDS,
-            client.writeTimeoutMillis / 1000)
+        assertEquals(HttpClientFactory.CONNECT_TIMEOUT_SECONDS * 1000,
+            client.connectTimeoutMillis.toLong())
+        assertEquals(HttpClientFactory.READ_TIMEOUT_SECONDS * 1000,
+            client.readTimeoutMillis.toLong())
+        assertEquals(HttpClientFactory.WRITE_TIMEOUT_SECONDS * 1000,
+            client.writeTimeoutMillis.toLong())
     }
 
     @Test
@@ -120,9 +119,10 @@ class HttpClientTest {
         )
         val client = builder.build()
 
-        assertEquals(5L, client.connectTimeoutMillis / 1000)
-        assertEquals(120L, client.readTimeoutMillis / 1000)
-        assertEquals(10L, client.writeTimeoutMillis / 1000)
+        // Compare raw millisecond values to avoid integer rounding issues
+        assertEquals(5000L, client.connectTimeoutMillis.toLong())
+        assertEquals(120000L, client.readTimeoutMillis.toLong())
+        assertEquals(10000L, client.writeTimeoutMillis.toLong())
     }
 
     // ===== RetryInterceptor Tests =====
