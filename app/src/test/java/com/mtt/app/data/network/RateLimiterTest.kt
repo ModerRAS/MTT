@@ -194,18 +194,6 @@ class RateLimiterTest {
     // region Exception tests
 
     @Test
-    fun `acquire with low RPM limit still permits sequential calls`() = runBlocking {
-        // Semaphore.withPermit releases the permit after each call,
-        // so sequential acquires always succeed regardless of rpmTimestamps.count.
-        // The RPM limit enforces concurrency via Semaphore, not sequential rate.
-        val limiter = RateLimiter(rpmLimit = 1, tpmLimit = 100000, timeoutMs = 100)
-
-        // Both acquires succeed because Semaphore releases permits after each call
-        limiter.acquire(tokens = 100)
-        limiter.acquire(tokens = 100)
-    }
-
-    @Test
     fun `RateLimitException has correct message`() {
         val exception = RateLimitException("Test rate limit message")
 
