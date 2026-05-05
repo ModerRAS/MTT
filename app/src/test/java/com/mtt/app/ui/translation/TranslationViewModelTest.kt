@@ -58,6 +58,8 @@ class TranslationViewModelTest {
     }
     private val secureStorage: SecureStorage = mockk {
         every { getApiKey(any()) } returns null   // Return null so defaults are used
+        every { getValue(any()) } returns null    // Return null for base URLs, model IDs etc.
+        every { getCustomModels() } returns null  // Return null so no custom models loaded
     }
     private val mockGlossaryDao: GlossaryDao = mockk(relaxed = true)
     private val mockSourceTextRepository: SourceTextRepository = mockk(relaxed = true)
