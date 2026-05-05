@@ -3,10 +3,18 @@ package com.mtt.app.ui.glossary
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mtt.app.core.error.Result
+import com.mtt.app.data.io.SourceTextRepository
 import com.mtt.app.data.local.dao.GlossaryDao
+import com.mtt.app.data.model.ExtractedTerm
 import com.mtt.app.data.model.GlossaryEntryEntity
+import com.mtt.app.data.model.GlossaryEntryUiModel
+import com.mtt.app.data.model.toEntity
+import com.mtt.app.data.model.toUiModel
+import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.glossary.GlossaryEntry
 import com.mtt.app.domain.glossary.GlossaryEngine
+import com.mtt.app.domain.usecase.ExtractTermsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,11 +41,29 @@ data class GlossaryUiState(
  */
 @HiltViewModel
 class GlossaryViewModel @Inject constructor(
-    private val glossaryDao: GlossaryDao
+    private val glossaryDao: GlossaryDao,
+    private val sourceTextRepository: SourceTextRepository,
+    private val extractTermsUseCase: ExtractTermsUseCase,
+    private val secureStorage: SecureStorage
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GlossaryUiState())
     val uiState: StateFlow<GlossaryUiState> = _uiState.asStateFlow()
+
+    private val _glossaryUiEntries = MutableStateFlow<List<GlossaryEntryUiModel>>(emptyList())
+    val glossaryUiEntries: StateFlow<List<GlossaryEntryUiModel>> = _glossaryUiEntries.asStateFlow()
+
+    private val _pendingDeleteEntry = MutableStateFlow<GlossaryEntryUiModel?>(null)
+    val pendingDeleteEntry: StateFlow<GlossaryEntryUiModel?> = _pendingDeleteEntry.asStateFlow()
+
+    private val _extractedTerms = MutableStateFlow<List<ExtractedTerm>>(emptyList())
+    val extractedTerms: StateFlow<List<ExtractedTerm>> = _extractedTerms.asStateFlow()
+
+    private val _showExtractionReview = MutableStateFlow(false)
+    val showExtractionReview: StateFlow<Boolean> = _showExtractionReview.asStateFlow()
+
+    private val _isExtracting = MutableStateFlow(false)
+    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
 
     // Current project ID - in a real app, this would come from a project manager
     private var currentProjectId: String = "default_project"
@@ -56,6 +82,9 @@ class GlossaryViewModel @Inject constructor(
                 val glossaryEntries = entries.map { it.toGlossaryEntry() }
                 val prohibitionEntries = glossaryEntries.filter { it.target.isEmpty() }
                 val glossaryOnlyEntries = glossaryEntries.filter { it.target.isNotEmpty() }
+
+                val uiModels = entries.map { it.toUiModel() }
+                _glossaryUiEntries.value = uiModels
 
                 _uiState.update {
                     it.copy(
@@ -183,6 +212,160 @@ class GlossaryViewModel @Inject constructor(
      */
     fun clearMessages() {
         _uiState.update { it.copy(errorMessage = null, successMessage = null) }
+    }
+
+    /**
+     * Add a new glossary entry.
+     * Rejects empty sourceTerm. Detects duplicate sourceTerm and shows error.
+     * Empty targetTerm creates a prohibition entry.
+     */
+    fun addEntry(sourceTerm: String, targetTerm: String, matchType: String) {
+        viewModelScope.launch {
+            try {
+                if (sourceTerm.isBlank()) {
+                    _uiState.update { it.copy(errorMessage = "原文术语不能为空") }
+                    return@launch
+                }
+
+                val existing = glossaryDao.getByProjectId(currentProjectId)
+                if (existing.any { it.sourceTerm == sourceTerm }) {
+                    _uiState.update { it.copy(errorMessage = "该术语已存在: $sourceTerm") }
+                    return@launch
+                }
+
+                val entity = GlossaryEntryEntity(
+                    projectId = currentProjectId,
+                    sourceTerm = sourceTerm,
+                    targetTerm = targetTerm,
+                    matchType = matchType
+                )
+                glossaryDao.insertAll(listOf(entity))
+                loadGlossaryData()
+
+                val message = if (targetTerm.isEmpty()) "已添加禁翻条目" else "已添加术语"
+                _uiState.update { it.copy(successMessage = message) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "添加术语失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Update an existing glossary entry.
+     * Detects type change (term ↔ prohibition) and sends appropriate message.
+     */
+    fun updateEntry(entry: GlossaryEntryUiModel) {
+        viewModelScope.launch {
+            try {
+                val allEntries = glossaryDao.getByProjectId(currentProjectId)
+                val oldEntry = allEntries.find { it.id == entry.id }
+
+                glossaryDao.updateEntry(entry.toEntity())
+                loadGlossaryData()
+
+                val message = when {
+                    oldEntry != null && oldEntry.targetTerm.isEmpty() && entry.targetTerm.isNotEmpty() ->
+                        "已将禁翻条目转为术语"
+                    oldEntry != null && oldEntry.targetTerm.isNotEmpty() && entry.targetTerm.isEmpty() ->
+                        "已将术语转为禁翻条目"
+                    else -> "已更新术语"
+                }
+                _uiState.update { it.copy(successMessage = message) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "更新术语失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Delete a glossary entry by its database ID.
+     */
+    fun deleteEntry(id: Long) {
+        viewModelScope.launch {
+            try {
+                glossaryDao.deleteById(id)
+                loadGlossaryData()
+                _uiState.update { it.copy(successMessage = "已删除术语") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "删除术语失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Show delete confirmation dialog for the given entry.
+     */
+    fun showDeleteConfirmation(entry: GlossaryEntryUiModel) {
+        _pendingDeleteEntry.value = entry
+    }
+
+    /**
+     * Confirm deletion of the pending entry.
+     */
+    fun confirmDelete() {
+        val entry = _pendingDeleteEntry.value ?: return
+        deleteEntry(entry.id)
+        _pendingDeleteEntry.value = null
+    }
+
+    /**
+     * Cancel deletion, clearing the pending entry.
+     */
+    fun cancelDelete() {
+        _pendingDeleteEntry.value = null
+    }
+
+    /**
+     * Extract terms from source texts using AI.
+     * Shows review dialog on success, error message on failure.
+     */
+    fun extractTerms() {
+        viewModelScope.launch {
+            _isExtracting.value = true
+            val texts = sourceTextRepository.sourceTexts.value
+            val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+            
+            when (val result = extractTermsUseCase.extractTerms(texts, srcLang)) {
+                is Result.Success -> {
+                    _extractedTerms.value = result.data
+                    _showExtractionReview.value = true
+                }
+                is Result.Failure -> {
+                    _uiState.update { it.copy(errorMessage = "术语提取失败: ${result.exception.message}") }
+                }
+            }
+            _isExtracting.value = false
+        }
+    }
+
+    /**
+     * Confirm extraction and insert selected terms into database.
+     */
+    fun confirmExtraction(selected: List<ExtractedTerm>) {
+        val entities = selected.map { term ->
+            GlossaryEntryEntity(
+                id = 0,
+                projectId = currentProjectId,
+                sourceTerm = term.sourceTerm,
+                targetTerm = term.suggestedTarget,
+                matchType = GlossaryEntryEntity.MATCH_TYPE_EXACT
+            )
+        }
+        viewModelScope.launch {
+            glossaryDao.insertAll(entities)
+            loadGlossaryData()
+            _uiState.update { it.copy(successMessage = "成功导入 ${selected.size} 条术语") }
+        }
+        _showExtractionReview.value = false
+        _extractedTerms.value = emptyList()
+    }
+
+    /**
+     * Cancel extraction review, clearing extracted terms.
+     */
+    fun cancelExtraction() {
+        _showExtractionReview.value = false
+        _extractedTerms.value = emptyList()
     }
 
     /**

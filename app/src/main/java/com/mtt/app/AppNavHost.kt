@@ -96,7 +96,17 @@ fun AppNavHost(
             modifier = Modifier.padding(innerPadding)
         ) {
             composable("translation") {
-                TranslationScreen()
+                TranslationScreen(
+                    onNavigateToSettings = {
+                        navController.navigate("settings") {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
             }
             composable("glossary") {
                 GlossaryScreen()

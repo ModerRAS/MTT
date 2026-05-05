@@ -3,10 +3,13 @@ package com.mtt.app.ui.translation
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import com.mtt.app.data.io.SourceTextRepository
+import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.model.TranslationUiState
+import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.pipeline.BatchResult
 import com.mtt.app.domain.usecase.TranslateTextsUseCase
 import io.mockk.coEvery
@@ -48,7 +51,16 @@ class TranslationViewModelTest {
     private val context: Context = mockk {
         every { contentResolver } returns this@TranslationViewModelTest.contentResolver
     }
+    private val secureStorage: SecureStorage = mockk {
+        every { getApiKey(any()) } returns null   // Return null so defaults are used
+    }
+    private val mockGlossaryDao: GlossaryDao = mockk(relaxed = true)
+    private val mockSourceTextRepository: SourceTextRepository = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
+
+    init {
+        coEvery { mockGlossaryDao.getByProjectId(any()) } returns emptyList()
+    }
 
     private lateinit var viewModel: TranslationViewModel
 
@@ -63,7 +75,7 @@ class TranslationViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = TranslationViewModel(useCase, context)
+        viewModel = TranslationViewModel(useCase, secureStorage, mockGlossaryDao, mockSourceTextRepository, context)
         viewModel.ioDispatcher = testDispatcher
     }
 

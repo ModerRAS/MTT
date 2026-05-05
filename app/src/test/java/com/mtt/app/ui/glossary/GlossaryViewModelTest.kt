@@ -1,13 +1,17 @@
 package com.mtt.app.ui.glossary
 
+import com.mtt.app.data.io.SourceTextRepository
 import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.model.GlossaryEntryEntity
+import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.glossary.GlossaryEntry
+import com.mtt.app.domain.usecase.ExtractTermsUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -27,12 +31,20 @@ class GlossaryViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var mockGlossaryDao: GlossaryDao
+    private lateinit var mockSourceTextRepository: SourceTextRepository
+    private lateinit var mockExtractTermsUseCase: ExtractTermsUseCase
+    private lateinit var mockSecureStorage: SecureStorage
     private lateinit var viewModel: GlossaryViewModel
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         mockGlossaryDao = mockk(relaxed = true)
+        mockSourceTextRepository = mockk(relaxed = true) {
+            coEvery { sourceTexts } returns MutableStateFlow(emptyMap())
+        }
+        mockExtractTermsUseCase = mockk(relaxed = true)
+        mockSecureStorage = mockk(relaxed = true)
     }
 
     @After
@@ -69,7 +81,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns mockEntries
 
         // When
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // Then
@@ -91,7 +103,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -128,7 +140,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -155,7 +167,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -182,7 +194,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -219,7 +231,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -238,7 +250,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.deleteByProjectId("default_project") } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // When
@@ -256,7 +268,7 @@ class GlossaryViewModelTest {
     fun `clearMessages clears success and error messages`() = runTest {
         // Given
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
-        viewModel = GlossaryViewModel(mockGlossaryDao)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
         advanceUntilIdle()
 
         // Simulate a success message

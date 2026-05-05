@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -20,6 +21,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -34,19 +37,29 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mtt.app.data.model.LlmProvider
+import com.mtt.app.data.model.ModelInfo
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.model.TranslationUiState
@@ -59,12 +72,15 @@ import java.util.Locale
  */
 @Composable
 fun TranslationScreen(
-    viewModel: TranslationViewModel = hiltViewModel()
+    viewModel: TranslationViewModel = hiltViewModel(),
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val progress by viewModel.progress.collectAsState()
     val currentMode by viewModel.currentMode.collectAsState()
     val selectedFileName by viewModel.selectedFileName.collectAsState()
+    val currentModel by viewModel.currentModel.collectAsState()
+    val prohibitionCount by viewModel.prohibitionCount.collectAsState()
 
     val isTranslating = uiState is TranslationUiState.Translating
     val isPaused = uiState is TranslationUiState.Idle && progress.completedItems > 0
@@ -91,16 +107,23 @@ fun TranslationScreen(
         uiState = uiState,
         progress = progress,
         currentMode = currentMode,
+        currentModel = currentModel,
+        prohibitionCount = prohibitionCount,
         selectedFileName = selectedFileName,
         isTranslating = isTranslating,
         isPaused = isPaused,
         isCompleted = isCompleted,
+        sourceLang = viewModel.sourceLang,
+        targetLang = viewModel.targetLang,
+        onSourceLangChange = viewModel::updateSourceLang,
+        onTargetLangChange = viewModel::updateTargetLang,
         onFilePick = { filePickerLauncher.launch(arrayOf("application/json")) },
         onModeChange = viewModel::onChangeMode,
         onStartClick = viewModel::onStartTranslation,
         onPauseClick = viewModel::onPauseTranslation,
         onResumeClick = viewModel::onResumeTranslation,
-        onExportClick = { exportLauncher.launch("translated.txt") }
+        onExportClick = { exportLauncher.launch("translated.txt") },
+        onNavigateToSettings = onNavigateToSettings
     )
 }
 
@@ -110,22 +133,30 @@ private fun TranslationScreenContent(
     uiState: TranslationUiState,
     progress: TranslationProgress,
     currentMode: TranslationMode,
+    currentModel: ModelInfo?,
+    prohibitionCount: Int,
     selectedFileName: String?,
     isTranslating: Boolean,
     isPaused: Boolean,
     isCompleted: Boolean,
+    sourceLang: String,
+    targetLang: String,
+    onSourceLangChange: (String) -> Unit,
+    onTargetLangChange: (String) -> Unit,
     onFilePick: () -> Unit,
     onModeChange: (TranslationMode) -> Unit,
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResumeClick: () -> Unit,
-    onExportClick: () -> Unit
+    onExportClick: () -> Unit,
+    onNavigateToSettings: () -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val languages = listOf("Japanese", "English", "Korean", "Chinese", "Auto")
+    val languages = listOf("日语", "英语", "韩语", "中文", "自动检测")
     val numberFormat = NumberFormat.getNumberInstance(Locale.US)
-    var sourceLanguage by remember { mutableStateOf("Japanese") }
-    var targetLanguage by remember { mutableStateOf("Chinese") }
+    var sourceLanguage by remember { mutableStateOf(sourceLang) }
+    var targetLanguage by remember { mutableStateOf(targetLang) }
+    var showModeHelpDialog by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -143,6 +174,29 @@ private fun TranslationScreenContent(
                 text = "翻译工具",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground
+            )
+
+            // Model indicator chip
+            val modelText = currentModel?.let { model ->
+                val providerName = when (model.provider) {
+                    is LlmProvider.OpenAI -> "OpenAI"
+                    is LlmProvider.Anthropic -> "Anthropic"
+                }
+                "$providerName: ${model.displayName}"
+            } ?: "未配置模型"
+
+            AssistChip(
+                onClick = onNavigateToSettings,
+                label = { Text(modelText) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                border = AssistChipDefaults.assistChipBorder(
+                    borderColor = MaterialTheme.colorScheme.outline,
+                    enabled = true
+                )
             )
 
             // File selection area
@@ -255,7 +309,10 @@ private fun TranslationScreenContent(
                             label = "源语言",
                             selectedLanguage = sourceLanguage,
                             languages = languages,
-                            onLanguageSelected = { sourceLanguage = it },
+                            onLanguageSelected = { lang ->
+                                sourceLanguage = lang
+                                onSourceLangChange(lang)
+                            },
                             enabled = !isTranslating,
                             modifier = Modifier.weight(1f)
                         )
@@ -264,7 +321,10 @@ private fun TranslationScreenContent(
                             label = "目标语言",
                             selectedLanguage = targetLanguage,
                             languages = languages,
-                            onLanguageSelected = { targetLanguage = it },
+                            onLanguageSelected = { lang ->
+                                targetLanguage = lang
+                                onTargetLangChange(lang)
+                            },
                             enabled = !isTranslating,
                             modifier = Modifier.weight(1f)
                         )
@@ -283,11 +343,26 @@ private fun TranslationScreenContent(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "翻译模式",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "翻译模式",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        IconButton(
+                            onClick = { showModeHelpDialog = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "翻译模式说明",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -318,6 +393,38 @@ private fun TranslationScreenContent(
                                 )
                             )
                         }
+                    }
+                }
+            }
+
+            // Prohibition not active warning banner
+            if (currentMode != TranslationMode.TRANSLATE && prohibitionCount > 0) {
+                val modeName = when (currentMode) {
+                    TranslationMode.POLISH -> "润色"
+                    TranslationMode.PROOFREAD -> "校对"
+                    else -> ""
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "当前为${modeName}模式，禁翻术语不生效（已配置 ${prohibitionCount} 条）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
             }
@@ -426,6 +533,54 @@ private fun TranslationScreenContent(
             }
         }
     }
+    
+    if (showModeHelpDialog) {
+        AlertDialog(
+            onDismissRequest = { showModeHelpDialog = false },
+            title = { Text("翻译模式说明") },
+            text = {
+                Column {
+                    Text(
+                        text = "翻译（TRANSLATE）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "将源文本翻译为目标语言。应用术语表和禁翻规则。适用于首次翻译。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    )
+                    
+                    Text(
+                        text = "润色（POLISH）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "优化目标语言文本的表达，使其更自然流畅。需要已有译文作为输入。禁翻规则不生效。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    )
+                    
+                    Text(
+                        text = "校对（PROOFREAD）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "对比原文检查目标语言文本的准确性，修正语法和漏译错误。需要原文+译文对照。禁翻规则不生效。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showModeHelpDialog = false }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -495,16 +650,28 @@ private fun TranslationScreenPreview() {
             uiState = TranslationUiState.Idle,
             progress = TranslationProgress.initial(),
             currentMode = TranslationMode.TRANSLATE,
+            currentModel = ModelInfo(
+                modelId = "gpt-4o-mini",
+                displayName = "GPT-4o Mini",
+                contextWindow = 128000,
+                provider = LlmProvider.OpenAI("")
+            ),
+            prohibitionCount = 0,
             selectedFileName = null,
             isTranslating = false,
             isPaused = false,
             isCompleted = false,
+            sourceLang = "日语",
+            targetLang = "中文",
+            onSourceLangChange = {},
+            onTargetLangChange = {},
             onFilePick = {},
             onModeChange = {},
             onStartClick = {},
             onPauseClick = {},
             onResumeClick = {},
-            onExportClick = {}
+            onExportClick = {},
+            onNavigateToSettings = {}
         )
     }
 }
@@ -517,16 +684,28 @@ private fun TranslationScreenDarkPreview() {
             uiState = TranslationUiState.Idle,
             progress = TranslationProgress.initial(),
             currentMode = TranslationMode.TRANSLATE,
+            currentModel = ModelInfo(
+                modelId = "claude-3-5-haiku",
+                displayName = "Claude 3.5 Haiku",
+                contextWindow = 200000,
+                provider = LlmProvider.Anthropic("")
+            ),
+            prohibitionCount = 0,
             selectedFileName = "example.json",
             isTranslating = false,
             isPaused = false,
             isCompleted = false,
+            sourceLang = "日语",
+            targetLang = "中文",
+            onSourceLangChange = {},
+            onTargetLangChange = {},
             onFilePick = {},
             onModeChange = {},
             onStartClick = {},
             onPauseClick = {},
             onResumeClick = {},
-            onExportClick = {}
+            onExportClick = {},
+            onNavigateToSettings = {}
         )
     }
 }
@@ -553,16 +732,28 @@ private fun TranslationScreenTranslatingPreview() {
                 status = "正在翻译第 5 批..."
             ),
             currentMode = TranslationMode.TRANSLATE,
+            currentModel = ModelInfo(
+                modelId = "gpt-4o-mini",
+                displayName = "GPT-4o Mini",
+                contextWindow = 128000,
+                provider = LlmProvider.OpenAI("")
+            ),
+            prohibitionCount = 0,
             selectedFileName = "example.json",
             isTranslating = true,
             isPaused = false,
             isCompleted = false,
+            sourceLang = "日语",
+            targetLang = "中文",
+            onSourceLangChange = {},
+            onTargetLangChange = {},
             onFilePick = {},
             onModeChange = {},
             onStartClick = {},
             onPauseClick = {},
             onResumeClick = {},
-            onExportClick = {}
+            onExportClick = {},
+            onNavigateToSettings = {}
         )
     }
 }

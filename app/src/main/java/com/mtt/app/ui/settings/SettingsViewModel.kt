@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import javax.inject.Inject
 
 /**
@@ -32,7 +34,61 @@ class SettingsViewModel @Inject constructor(
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
+        loadCustomModels()
         loadSettings()
+    }
+
+    /**
+     * Load custom models from SecureStorage and populate ModelRegistry.
+     */
+    private fun loadCustomModels() {
+        val json = secureStorage.getCustomModels()
+        if (json != null) {
+            try {
+                val models = parseCustomModelsJson(json)
+                ModelRegistry.initCustomModels(models)
+            } catch (_: Exception) {
+                // If JSON parsing fails, just use defaults
+            }
+        }
+    }
+
+    /**
+     * Parse custom models from saved JSON string.
+     */
+    private fun parseCustomModelsJson(json: String): List<ModelInfo> {
+        val models = mutableListOf<ModelInfo>()
+        val arr = JSONArray(json)
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val modelId = obj.getString("modelId")
+            val displayName = obj.optString("displayName", modelId)
+            val contextWindow = obj.optInt("contextWindow", 128000)
+            val providerName = obj.optString("provider", "openai")
+            val provider = if (providerName == "anthropic") {
+                LlmProvider.Anthropic("", "")
+            } else {
+                LlmProvider.OpenAI("", "")
+            }
+            models.add(ModelRegistry.createCustom(modelId, displayName, contextWindow, provider))
+        }
+        return models
+    }
+
+    /**
+     * Serialize custom models to JSON string for persistence.
+     */
+    private fun serializeCustomModels(): String {
+        val arr = JSONArray()
+        for (model in ModelRegistry.customModels) {
+            val obj = JSONObject()
+            obj.put("modelId", model.modelId)
+            obj.put("displayName", model.displayName)
+            obj.put("contextWindow", model.contextWindow)
+            obj.put("provider", if (model.provider is LlmProvider.Anthropic) "anthropic" else "openai")
+            arr.put(obj)
+        }
+        return arr.toString()
     }
 
     /**
@@ -45,11 +101,16 @@ class SettingsViewModel @Inject constructor(
         val openAiModels = ModelRegistry.getByProvider(LlmProvider.OpenAI("", ""))
         val anthropicModels = ModelRegistry.getByProvider(LlmProvider.Anthropic("", ""))
         
-        val savedOpenAiModelId = secureStorage.getApiKey("openai_model") ?: ModelRegistry.defaultOpenAiModel.modelId
-        val savedAnthropicModelId = secureStorage.getApiKey("anthropic_model") ?: ModelRegistry.defaultAnthropicModel.modelId
+        // Use getApiKey for backward compatibility (getApiKey transforms "openai_model" -> "key_openai_model")
+        val savedOpenAiModelId = secureStorage.getApiKey(SecureStorage.KEY_OPENAI_MODEL)
+            ?: ModelRegistry.defaultOpenAiModel.modelId
+        val savedAnthropicModelId = secureStorage.getApiKey(SecureStorage.KEY_ANTHROPIC_MODEL)
+            ?: ModelRegistry.defaultAnthropicModel.modelId
         
-        val selectedOpenAiModel = openAiModels.find { it.modelId == savedOpenAiModelId } ?: ModelRegistry.defaultOpenAiModel
-        val selectedAnthropicModel = anthropicModels.find { it.modelId == savedAnthropicModelId } ?: ModelRegistry.defaultAnthropicModel
+        val selectedOpenAiModel = openAiModels.find { it.modelId == savedOpenAiModelId }
+            ?: ModelRegistry.defaultOpenAiModel
+        val selectedAnthropicModel = anthropicModels.find { it.modelId == savedAnthropicModelId }
+            ?: ModelRegistry.defaultAnthropicModel
         
         _uiState.update { state ->
             state.copy(
@@ -69,6 +130,20 @@ class SettingsViewModel @Inject constructor(
                     defaultModel = ModelRegistry.defaultAnthropicModel,
                     defaultBaseUrl = "https://api.anthropic.com"
                 )
+            )
+        }
+    }
+
+    /**
+     * Refresh available models list (e.g., after adding a custom model).
+     */
+    private fun refreshModels() {
+        val openAiModels = ModelRegistry.getByProvider(LlmProvider.OpenAI("", ""))
+        val anthropicModels = ModelRegistry.getByProvider(LlmProvider.Anthropic("", ""))
+        _uiState.update { state ->
+            state.copy(
+                openAiSettings = state.openAiSettings.copy(availableModels = openAiModels),
+                anthropicSettings = state.anthropicSettings.copy(availableModels = anthropicModels)
             )
         }
     }
@@ -103,6 +178,7 @@ class SettingsViewModel @Inject constructor(
 
     /**
      * Update OpenAI selected model.
+     * Supports both preset and custom model selection by modelId string.
      */
     fun updateOpenAiModel(model: ModelInfo) {
         _uiState.update { state ->
@@ -111,6 +187,33 @@ class SettingsViewModel @Inject constructor(
                     selectedModel = model
                 )
             )
+        }
+    }
+
+    /**
+     * Update OpenAI selected model by modelId (used when user types a custom model name).
+     * If the modelId matches a known model, use that. Otherwise create a custom ModelInfo.
+     */
+    fun updateOpenAiModelById(modelId: String) {
+        val existing = ModelRegistry.allModels.firstOrNull { it.modelId == modelId }
+        if (existing != null && existing.provider is LlmProvider.OpenAI) {
+            updateOpenAiModel(existing)
+        } else {
+            // Create a custom/openai ModelInfo or find existing one
+            val custom = ModelRegistry.customModels.firstOrNull {
+                it.modelId == modelId && it.provider is LlmProvider.OpenAI
+            }
+            if (custom != null) {
+                updateOpenAiModel(custom)
+            } else if (modelId.isNotBlank()) {
+                // Create temporary custom model in-memory
+                val newModel = ModelRegistry.createCustom(
+                    modelId = modelId,
+                    displayName = modelId,
+                    provider = LlmProvider.OpenAI("", "")
+                )
+                updateOpenAiModel(newModel)
+            }
         }
     }
 
@@ -156,6 +259,30 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
+     * Update Anthropic selected model by modelId (used when user types a custom model name).
+     */
+    fun updateAnthropicModelById(modelId: String) {
+        val existing = ModelRegistry.allModels.firstOrNull { it.modelId == modelId }
+        if (existing != null && existing.provider is LlmProvider.Anthropic) {
+            updateAnthropicModel(existing)
+        } else {
+            val custom = ModelRegistry.customModels.firstOrNull {
+                it.modelId == modelId && it.provider is LlmProvider.Anthropic
+            }
+            if (custom != null) {
+                updateAnthropicModel(custom)
+            } else if (modelId.isNotBlank()) {
+                val newModel = ModelRegistry.createCustom(
+                    modelId = modelId,
+                    displayName = modelId,
+                    provider = LlmProvider.Anthropic("", "")
+                )
+                updateAnthropicModel(newModel)
+            }
+        }
+    }
+
+    /**
      * Toggle OpenAI API key visibility.
      */
     fun toggleOpenAiKeyVisibility() {
@@ -180,6 +307,38 @@ class SettingsViewModel @Inject constructor(
             )
         }
     }
+
+    // ── Custom Model Management ────────────────────
+
+    /**
+     * Add a custom model with the given parameters and persist it.
+     */
+    fun addCustomModel(modelId: String, displayName: String, contextWindow: Int, isAnthropic: Boolean) {
+        val provider = if (isAnthropic) LlmProvider.Anthropic("", "") else LlmProvider.OpenAI("", "")
+        val model = ModelRegistry.createCustom(modelId, displayName, contextWindow, provider)
+        ModelRegistry.addCustomModel(model)
+        saveCustomModels()
+        refreshModels()
+    }
+
+    /**
+     * Remove a custom model and persist the change.
+     */
+    fun removeCustomModel(modelId: String) {
+        ModelRegistry.removeCustomModel(modelId)
+        saveCustomModels()
+        refreshModels()
+    }
+
+    /**
+     * Persist custom models to SecureStorage.
+     */
+    private fun saveCustomModels() {
+        val json = serializeCustomModels()
+        secureStorage.saveCustomModels(json)
+    }
+
+    // ── Test Connection ───────────────────────────
 
     /**
      * Test OpenAI connection.
@@ -336,7 +495,8 @@ class SettingsViewModel @Inject constructor(
         } else {
             secureStorage.clearApiKey(SecureStorage.PROVIDER_OPENAI)
         }
-        secureStorage.saveApiKey("openai_model", state.openAiSettings.selectedModel.modelId)
+        // Use saveApiKey for backward compatibility (transform "openai_model" -> "key_openai_model")
+        secureStorage.saveApiKey(SecureStorage.KEY_OPENAI_MODEL, state.openAiSettings.selectedModel.modelId)
         
         // Save Anthropic settings
         if (state.anthropicSettings.apiKey.isNotBlank()) {
@@ -344,7 +504,10 @@ class SettingsViewModel @Inject constructor(
         } else {
             secureStorage.clearApiKey(SecureStorage.PROVIDER_ANTHROPIC)
         }
-        secureStorage.saveApiKey("anthropic_model", state.anthropicSettings.selectedModel.modelId)
+        secureStorage.saveApiKey(SecureStorage.KEY_ANTHROPIC_MODEL, state.anthropicSettings.selectedModel.modelId)
+        
+        // Save custom models
+        saveCustomModels()
     }
 
     /**

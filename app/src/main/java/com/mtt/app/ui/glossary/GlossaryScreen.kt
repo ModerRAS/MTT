@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,28 +24,50 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mtt.app.data.model.ExtractedTerm
+import com.mtt.app.data.model.GlossaryEntryUiModel
 import com.mtt.app.domain.glossary.GlossaryEntry
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -58,8 +81,17 @@ fun GlossaryScreen(
     viewModel: GlossaryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val glossaryUiEntries by viewModel.glossaryUiEntries.collectAsState()
+    val pendingDeleteEntry by viewModel.pendingDeleteEntry.collectAsState()
+    val isExtracting by viewModel.isExtracting.collectAsState()
+    val showExtractionReview by viewModel.showExtractionReview.collectAsState()
+    val extractedTerms by viewModel.extractedTerms.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    
+    // Dialog states
+    var showAddDialog by remember { mutableStateOf(false) }
+    var editingEntry by remember { mutableStateOf<GlossaryEntryUiModel?>(null) }
 
     // CSV file picker for glossary import
     val csvFilePicker = rememberLauncherForActivityResult(
@@ -107,6 +139,11 @@ fun GlossaryScreen(
                 )
             )
         },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAddDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "添加术语")
+            }
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Column(
@@ -141,12 +178,88 @@ fun GlossaryScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // AI Extraction Button
+            OutlinedButton(
+                onClick = { viewModel.extractTerms() },
+                enabled = uiState.previewEntries.isNotEmpty() && !isExtracting,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isExtracting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("从原文提取术语 (AI)")
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // Preview List
             PreviewSection(
-                entries = uiState.previewEntries,
-                isLoading = uiState.isLoading
+                entries = glossaryUiEntries,
+                isLoading = uiState.isLoading,
+                onEntryClick = { entry -> editingEntry = entry },
+                onEntryDelete = { entry -> viewModel.showDeleteConfirmation(entry) }
             )
         }
+    }
+    
+    // Add/Edit Dialog
+    if (showAddDialog) {
+        GlossaryEntryDialog(
+            editingEntry = null,
+            onDismiss = { showAddDialog = false },
+            onConfirm = { source, target, type ->
+                viewModel.addEntry(source, target, type)
+                showAddDialog = false
+            }
+        )
+    }
+    
+    if (editingEntry != null) {
+        GlossaryEntryDialog(
+            editingEntry = editingEntry,
+            onDismiss = { editingEntry = null },
+            onConfirm = { source, target, type ->
+                editingEntry?.let { 
+                    viewModel.updateEntry(it.copy(sourceTerm = source, targetTerm = target, matchType = type)) 
+                }
+                editingEntry = null
+            }
+        )
+    }
+    
+    // Delete Confirmation Dialog
+    pendingDeleteEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelDelete() },
+            title = { Text("确认删除") },
+            text = { Text("确定要删除术语 '${entry.sourceTerm}' 吗？") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmDelete() }) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelDelete() }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    
+    // Extraction Review Dialog
+    if (showExtractionReview) {
+        ExtractionReviewDialog(
+            terms = extractedTerms,
+            existingTerms = glossaryUiEntries.map { it.sourceTerm },
+            onDismiss = { viewModel.cancelExtraction() },
+            onConfirm = { selected -> viewModel.confirmExtraction(selected) }
+        )
     }
 }
 
@@ -341,13 +454,18 @@ private fun ClearSection(
 }
 
 /**
- * Preview section showing first 20 entries.
+ * Preview section showing glossary and prohibition entries with section headers.
  */
 @Composable
 private fun PreviewSection(
-    entries: List<GlossaryEntry>,
-    isLoading: Boolean
+    entries: List<GlossaryEntryUiModel>,
+    isLoading: Boolean,
+    onEntryClick: (GlossaryEntryUiModel) -> Unit,
+    onEntryDelete: (GlossaryEntryUiModel) -> Unit
 ) {
+    val glossaryEntries = entries.filter { it.targetTerm.isNotEmpty() }
+    val prohibitionEntries = entries.filter { it.targetTerm.isEmpty() }
+    
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -360,7 +478,7 @@ private fun PreviewSection(
                 .padding(16.dp)
         ) {
             Text(
-                text = "预览 (前20条)",
+                text = "术语表管理",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -390,14 +508,59 @@ private fun PreviewSection(
                     )
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(entries) { entry ->
-                        GlossaryEntryItem(entry = entry)
+                // Glossary Section
+                if (glossaryEntries.isNotEmpty()) {
+                    Text(
+                        text = "术语表",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(glossaryEntries) { entry ->
+                            GlossaryEntryItem(
+                                entry = entry,
+                                onClick = { onEntryClick(entry) },
+                                onDelete = { onEntryDelete(entry) }
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                
+                // Prohibition Section
+                if (prohibitionEntries.isNotEmpty()) {
+                    Text(
+                        text = "禁翻表",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(prohibitionEntries) { entry ->
+                            GlossaryEntryItem(
+                                entry = entry,
+                                onClick = { onEntryClick(entry) },
+                                onDelete = { onEntryDelete(entry) }
+                            )
+                        }
                     }
                 }
             }
@@ -406,39 +569,71 @@ private fun PreviewSection(
 }
 
 /**
- * Individual glossary entry item.
+ * Individual glossary entry item with click and swipe-to-delete support.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GlossaryEntryItem(entry: GlossaryEntry) {
-    val isProhibition = entry.target.isEmpty()
+private fun GlossaryEntryItem(
+    entry: GlossaryEntryUiModel,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val isProhibition = entry.targetTerm.isEmpty()
     
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    SwipeToDismissBox(
+        state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+            }
+            false
+        }),
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 4.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(end = 16.dp)
+                )
+            }
+        },
+        modifier = Modifier.padding(vertical = 4.dp)
     ) {
-        Column(
-            modifier = Modifier.weight(1f)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = entry.source,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
-            if (!isProhibition) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
-                    text = "→ ${entry.target}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
+                    text = entry.sourceTerm,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
                 )
-            } else {
-                Text(
-                    text = "禁翻",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
+                if (!isProhibition) {
+                    Text(
+                        text = "→ ${entry.targetTerm}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = "🚫 禁翻",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }
@@ -446,6 +641,165 @@ private fun GlossaryEntryItem(entry: GlossaryEntry) {
     HorizontalDivider(
         modifier = Modifier.padding(vertical = 4.dp),
         color = MaterialTheme.colorScheme.outlineVariant
+    )
+}
+
+/**
+ * Dialog for adding or editing a glossary entry.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlossaryEntryDialog(
+    editingEntry: GlossaryEntryUiModel?,
+    onDismiss: () -> Unit,
+    onConfirm: (sourceTerm: String, targetTerm: String, matchType: String) -> Unit
+) {
+    var sourceTerm by rememberSaveable { mutableStateOf(editingEntry?.sourceTerm ?: "") }
+    var targetTerm by rememberSaveable { mutableStateOf(editingEntry?.targetTerm ?: "") }
+    var matchType by rememberSaveable { mutableStateOf(editingEntry?.matchType ?: "EXACT") }
+    var matchTypeExpanded by remember { mutableStateOf(false) }
+    
+    val matchTypes = listOf("EXACT", "REGEX", "CASE_INSENSITIVE")
+    val matchTypeLabels = mapOf(
+        "EXACT" to "精确匹配",
+        "REGEX" to "正则表达式",
+        "CASE_INSENSITIVE" to "忽略大小写"
+    )
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (editingEntry == null) "添加术语" else "编辑术语") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = sourceTerm,
+                    onValueChange = { sourceTerm = it },
+                    label = { Text("原文术语") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                OutlinedTextField(
+                    value = targetTerm,
+                    onValueChange = { targetTerm = it },
+                    label = { Text("译文（留空=禁翻）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                ExposedDropdownMenuBox(
+                    expanded = matchTypeExpanded,
+                    onExpandedChange = { matchTypeExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = matchTypeLabels[matchType] ?: matchType,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("匹配类型") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = matchTypeExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+                    
+                    ExposedDropdownMenu(
+                        expanded = matchTypeExpanded,
+                        onDismissRequest = { matchTypeExpanded = false }
+                    ) {
+                        matchTypes.forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(matchTypeLabels[type] ?: type) },
+                                onClick = {
+                                    matchType = type
+                                    matchTypeExpanded = false
+                                },
+                                contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(sourceTerm, targetTerm, matchType) },
+                enabled = sourceTerm.isNotBlank()
+            ) {
+                Text("确认")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+/**
+ * Extraction review dialog for AI-extracted terms.
+ * Shows candidate terms with checkboxes, category, and "already exists" tag.
+ */
+@Composable
+fun ExtractionReviewDialog(
+    terms: List<ExtractedTerm>,
+    existingTerms: List<String>,  // list of existing source terms for dedup check
+    onDismiss: () -> Unit,
+    onConfirm: (selected: List<ExtractedTerm>) -> Unit
+) {
+    var selected by remember { mutableStateOf(terms.toSet()) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认导入术语 (${selected.size}/${terms.size})") },
+        text = {
+            LazyColumn {
+                items(terms) { term ->
+                    val alreadyExists = existingTerms.contains(term.sourceTerm)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = term in selected && !alreadyExists,
+                            onCheckedChange = { if (!alreadyExists) {
+                                selected = if (term in selected) {
+                                    selected - term
+                                } else {
+                                    selected + term
+                                }
+                            } },
+                            enabled = !alreadyExists
+                        )
+                        Column {
+                            Text(term.sourceTerm, fontWeight = FontWeight.Bold)
+                            Text("→ ${term.suggestedTarget}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (alreadyExists) {
+                                Text("已存在", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                            }
+                            if (term.category.isNotEmpty()) {
+                                Text("类别: ${term.category}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selected.toList()) },
+                enabled = selected.isNotEmpty()
+            ) {
+                Text("确认导入 (${selected.size})")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
     )
 }
 

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import com.mtt.app.data.model.GlossaryEntryEntity
 
 /**
@@ -29,4 +30,7 @@ interface GlossaryDao {
 
     @Query("DELETE FROM glossary_entries WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Update
+    suspend fun updateEntry(entry: GlossaryEntryEntity)
 }
