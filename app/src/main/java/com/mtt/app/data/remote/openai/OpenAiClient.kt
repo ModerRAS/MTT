@@ -2,6 +2,7 @@ package com.mtt.app.data.remote.openai
 
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
+import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationResponse
 import com.openai.client.OpenAIClient
@@ -26,10 +27,6 @@ class OpenAiClient(
     private val apiKey: String,
     private val baseUrl: String = "https://api.openai.com/v1"
 ) {
-    companion object {
-        private const val REQUEST_TIMEOUT_SECONDS = 60L
-    }
-
     private val client: OpenAIClient by lazy {
         OpenAIOkHttpClient.builder()
             .apiKey(apiKey)
@@ -78,8 +75,10 @@ class OpenAiClient(
                 tokensUsed = tokensUsed
             )
         } catch (e: IOException) {
-            throw NetworkException("网络连接失败，请检查网络")
+            AppLogger.e(TAG, "OpenAI translate IOException: ${e.message}", e)
+            throw NetworkException("网络连接失败，请检查网络: ${e.message}")
         } catch (e: Exception) {
+            AppLogger.e(TAG, "OpenAI translate failed: ${e.javaClass.simpleName}: ${e.message}", e)
             throw mapApiError(e)
         }
     }
@@ -105,6 +104,7 @@ class OpenAiClient(
 
     private fun mapApiError(e: Exception): Exception {
         val message = e.message ?: ""
+        val errorType = e.javaClass.simpleName
         return when {
             message.contains("401") || message.contains("unauthorized", ignoreCase = true) ->
                 ApiException.authFailure()
@@ -116,7 +116,12 @@ class OpenAiClient(
             message.contains("403") ->
                 ApiException.forbidden()
             else ->
-                ApiException(0, "API 请求失败: $message")
+                ApiException(0, "API 请求失败 [$errorType]: $message")
         }
+    }
+    
+    companion object {
+        private const val TAG = "OpenAiClient"
+        private const val REQUEST_TIMEOUT_SECONDS = 60L
     }
 }

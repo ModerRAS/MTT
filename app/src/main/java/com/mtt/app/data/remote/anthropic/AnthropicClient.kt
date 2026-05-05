@@ -5,6 +5,7 @@ import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.models.messages.MessageCreateParams
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
+import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationResponse
 import okhttp3.OkHttpClient
@@ -27,6 +28,7 @@ class AnthropicClient(
     private val baseUrl: String = "https://api.anthropic.com"
 ) {
     companion object {
+        private const val TAG = "AnthropicClient"
         private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val DEFAULT_MAX_TOKENS = 4096L
         private const val REQUEST_TIMEOUT_SECONDS = 60L
@@ -73,8 +75,10 @@ class AnthropicClient(
                 tokensUsed = tokensUsed
             )
         } catch (e: IOException) {
-            throw NetworkException("网络连接失败，请检查网络")
+            AppLogger.e(TAG, "Anthropic translate IOException: ${e.message}", e)
+            throw NetworkException("网络连接失败，请检查网络: ${e.message}")
         } catch (e: Exception) {
+            AppLogger.e(TAG, "Anthropic translate failed: ${e.javaClass.simpleName}: ${e.message}", e)
             throw mapApiError(e)
         }
     }
@@ -109,6 +113,7 @@ class AnthropicClient(
 
     private fun mapApiError(e: Exception): Exception {
         val message = e.message ?: ""
+        val errorType = e.javaClass.simpleName
         return when {
             message.contains("401") || message.contains("unauthorized", ignoreCase = true) ->
                 ApiException.authFailure()
@@ -120,7 +125,7 @@ class AnthropicClient(
             message.contains("403") ->
                 ApiException.forbidden()
             else ->
-                ApiException(0, "API 请求失败: $message")
+                ApiException(0, "API 请求失败 [$errorType]: $message")
         }
     }
 }
