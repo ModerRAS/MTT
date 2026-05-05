@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import javax.inject.Inject
 
@@ -79,6 +81,62 @@ class TranslationViewModel @Inject constructor(
         // which requires a properly initialized coroutine context. In Hilt-injected ViewModels,
         // viewModelScope is automatically initialized. In unit tests that manually construct
         // the ViewModel, these must be invoked manually after construction.
+        loadCustomModelsFromStorage()
+        loadModelFromSettings()
+    }
+
+    /**
+     * Load custom models from SecureStorage and register them in ModelRegistry.
+     */
+    private fun loadCustomModelsFromStorage() {
+        try {
+            val json = secureStorage.getCustomModels()
+            if (json.isNullOrBlank()) return
+
+            val models = mutableListOf<ModelInfo>()
+            val jsonArray = JSONArray(json)
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val modelId = obj.getString("modelId")
+                val displayName = obj.optString("displayName", modelId)
+                val contextWindow = obj.optInt("contextWindow", 128000)
+                val providerStr = obj.optString("provider", "openai")
+
+                val provider = when (providerStr.lowercase()) {
+                    "anthropic" -> {
+                        val key = secureStorage.getApiKey(SecureStorage.PROVIDER_ANTHROPIC) ?: ""
+                        LlmProvider.Anthropic(key)
+                    }
+                    else -> {
+                        val key = secureStorage.getApiKey(SecureStorage.PROVIDER_OPENAI) ?: ""
+                        LlmProvider.OpenAI(key)
+                    }
+                }
+
+                models.add(
+                    ModelInfo(
+                        modelId = modelId,
+                        displayName = displayName,
+                        contextWindow = contextWindow,
+                        provider = provider,
+                        isCustom = true
+                    )
+                )
+            }
+
+            ModelRegistry.initCustomModels(models)
+        } catch (_: Exception) {
+            // Silently ignore parsing errors - custom models simply won't be available
+        }
+    }
+
+    /**
+     * Reload settings from SecureStorage (model selection, languages).
+     * Call this when returning from Settings screen to pick up changes.
+     */
+    fun reloadSettings() {
+        loadCustomModelsFromStorage()
         loadModelFromSettings()
     }
 
