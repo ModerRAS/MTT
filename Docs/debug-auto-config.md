@@ -20,7 +20,7 @@
 ```json
 {
     "openai_api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "openai_base_url": "https://llm.miaostay.com/v1",
+    "openai_base_url": "https://your-api-endpoint.example.com/v1",
     "openai_model": "deepseek-v4-flash",
     "test_json_path": "/data/local/tmp/test_translation.json"
 }
