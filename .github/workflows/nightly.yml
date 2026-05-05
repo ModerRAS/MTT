@@ -1,6 +1,10 @@
 name: Nightly Build
 
 on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
   schedule:
     # Run at 02:00 UTC (10:00 北京时间)
     - cron: '0 2 * * *'
@@ -21,11 +25,13 @@ jobs:
       - name: Check commits in last 24h
         id: check
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # Always build on push, pull_request, or manual trigger
+          if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Manual trigger, will always build."
+            echo "Triggered by ${{ github.event_name }}, will always build."
             exit 0
           fi
+          # For scheduled runs, only build if there were commits in the last 24h
           COMMITS=$(git log --since="24 hours ago" --oneline | wc -l)
           if [ "$COMMITS" -gt 0 ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
@@ -91,21 +97,21 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mtt-debug-${{ github.run_date }}
+          name: mtt-debug-${{ github.run_id }}
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
       - name: Upload lint report
         uses: actions/upload-artifact@v4
         with:
-          name: mtt-lint-report-${{ github.run_date }}
+          name: mtt-lint-report-${{ github.run_id }}
           path: app/build/reports/lint-results-debug.html
           retention-days: 7
 
       - name: Upload test report
         uses: actions/upload-artifact@v4
         with:
-          name: mtt-test-report-${{ github.run_date }}
+          name: mtt-test-report-${{ github.run_id }}
           path: app/build/reports/tests/testDebugUnitTest/
           retention-days: 7
 

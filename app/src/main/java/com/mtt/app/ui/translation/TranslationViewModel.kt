@@ -89,12 +89,10 @@ class TranslationViewModel @Inject constructor(
     val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
 
     init {
-        // Note: loadGlossaryEntries() and loadProhibitionCount() are called via viewModelScope.launch()
-        // which requires a properly initialized coroutine context. In Hilt-injected ViewModels,
-        // viewModelScope is automatically initialized. In unit tests that manually construct
-        // the ViewModel, these must be invoked manually after construction.
         loadCustomModelsFromStorage()
         loadModelFromSettings()
+        loadGlossaryEntries()
+        loadProhibitionCount()
         tryAutoStartTranslation()
     }
 

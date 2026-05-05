@@ -274,25 +274,39 @@ class ExtractTermsUseCase @Inject constructor(
     private fun loadModelFromSettings(): ModelInfo {
         val openAiKey = secureStorage.getApiKey(SecureStorage.PROVIDER_OPENAI)
         val anthropicKey = secureStorage.getApiKey(SecureStorage.PROVIDER_ANTHROPIC)
+        val openAiBaseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL)
+            ?: LlmProvider.OpenAI("", "").baseUrl
+        val anthropicBaseUrl = secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL)
+            ?: LlmProvider.Anthropic("", "").baseUrl
 
         return if (anthropicKey?.isNotBlank() == true && openAiKey?.isNotBlank() != true) {
             val modelId = secureStorage.getApiKey(SecureStorage.KEY_ANTHROPIC_MODEL)
                 ?: ModelRegistry.defaultAnthropicModel.modelId
-            ModelRegistry.getById(modelId) ?: ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 200000,
-                provider = LlmProvider.Anthropic(anthropicKey)
-            )
+            val baseModel = ModelRegistry.getById(modelId)
+            if (baseModel != null) {
+                baseModel.copy(provider = LlmProvider.Anthropic(anthropicKey, anthropicBaseUrl))
+            } else {
+                ModelInfo(
+                    modelId = modelId,
+                    displayName = modelId,
+                    contextWindow = 200000,
+                    provider = LlmProvider.Anthropic(anthropicKey, anthropicBaseUrl)
+                )
+            }
         } else {
             val modelId = secureStorage.getApiKey(SecureStorage.KEY_OPENAI_MODEL)
                 ?: ModelRegistry.defaultOpenAiModel.modelId
-            ModelRegistry.getById(modelId) ?: ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 128000,
-                provider = LlmProvider.OpenAI(openAiKey ?: "")
-            )
+            val baseModel = ModelRegistry.getById(modelId)
+            if (baseModel != null) {
+                baseModel.copy(provider = LlmProvider.OpenAI(openAiKey ?: "", openAiBaseUrl))
+            } else {
+                ModelInfo(
+                    modelId = modelId,
+                    displayName = modelId,
+                    contextWindow = 128000,
+                    provider = LlmProvider.OpenAI(openAiKey ?: "", openAiBaseUrl)
+                )
+            }
         }
     }
 
