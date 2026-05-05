@@ -11,6 +11,7 @@ import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.model.TranslationUiState
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.pipeline.BatchResult
+import com.mtt.app.domain.usecase.ExtractTermsUseCase
 import com.mtt.app.domain.usecase.TranslateTextsUseCase
 import io.mockk.coEvery
 import io.mockk.every
@@ -63,6 +64,7 @@ class TranslationViewModelTest {
     }
     private val mockGlossaryDao: GlossaryDao = mockk(relaxed = true)
     private val mockSourceTextRepository: SourceTextRepository = mockk(relaxed = true)
+    private val mockExtractTermsUseCase: ExtractTermsUseCase = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     init {
@@ -82,7 +84,7 @@ class TranslationViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = TranslationViewModel(useCase, secureStorage, mockGlossaryDao, mockSourceTextRepository, context)
+        viewModel = TranslationViewModel(useCase, secureStorage, mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, context)
         viewModel.ioDispatcher = testDispatcher
     }
 

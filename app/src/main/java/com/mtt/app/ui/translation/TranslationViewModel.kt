@@ -53,6 +53,7 @@ class TranslationViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
     private val glossaryDao: com.mtt.app.data.local.dao.GlossaryDao,
     private val sourceTextRepository: SourceTextRepository,
+    private val extractTermsUseCase: com.mtt.app.domain.usecase.ExtractTermsUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -75,6 +76,17 @@ class TranslationViewModel @Inject constructor(
 
     private val _currentModel = MutableStateFlow<ModelInfo?>(null)
     val currentModel: StateFlow<ModelInfo?> = _currentModel.asStateFlow()
+
+    // ── Glossary extraction state ─────────────────
+
+    private val _extractedTerms = MutableStateFlow<List<com.mtt.app.data.model.ExtractedTerm>>(emptyList())
+    val extractedTerms: StateFlow<List<com.mtt.app.data.model.ExtractedTerm>> = _extractedTerms.asStateFlow()
+
+    private val _showExtractionReview = MutableStateFlow(false)
+    val showExtractionReview: StateFlow<Boolean> = _showExtractionReview.asStateFlow()
+
+    private val _isExtracting = MutableStateFlow(false)
+    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
 
     init {
         // Note: loadGlossaryEntries() and loadProhibitionCount() are called via viewModelScope.launch()
@@ -327,6 +339,7 @@ class TranslationViewModel @Inject constructor(
     /**
      * Read the file at [uri] and extract texts from MTool JSON (key=source, value=translation).
      *
+     * Uses [StreamingJsonReader] to avoid OOM on large files.
      * Emits [TranslationUiState.Loading] while reading, then transitions to
      * [TranslationUiState.Idle] on success or [TranslationUiState.Error] on failure.
      */
@@ -336,22 +349,17 @@ class TranslationViewModel @Inject constructor(
 
         viewModelScope.launch(ioDispatcher) {
             try {
-                val content = context.contentResolver
+                val inputStream = context.contentResolver
                     .openInputStream(uri)
-                    ?.use { it.bufferedReader().readText() }
                     ?: throw IOException("Cannot open file")
 
-                val trimmed = content.trim()
-
-                // Parse MTool JSON format: { "source": "source", ... }
-                // where key=source text, value=current translation (initially same as key)
-                val json = JSONObject(trimmed)
-                val namesArray = json.names()
                 val map = LinkedHashMap<String, String>()
-                if (namesArray != null) {
-                    for (i in 0 until namesArray.length()) {
-                        val key = namesArray.getString(i)
-                        map[key] = json.optString(key, key)
+                inputStream.use { stream ->
+                    val jsonReader = com.mtt.app.data.io.StreamingJsonReader(stream)
+                    jsonReader.use { reader ->
+                        reader.readEntries { key, value ->
+                            map[key] = value
+                        }
                     }
                 }
 
@@ -445,28 +453,31 @@ class TranslationViewModel @Inject constructor(
     }
 
     /**
-     * Write [translatedResults] to the file at [uri] as UTF-8 text.
+     * Write [translatedResults] to the file at [uri] as MTool JSON.
      *
-     * Each translated item is written on its own line.  Emits
-     * [TranslationUiState.Completed] on success.
+     * Uses [StreamingJsonWriter] to avoid OOM on large exports.
+     * Emits [TranslationUiState.Completed] on success.
      */
     fun onExportResult(uri: Uri) {
         viewModelScope.launch(ioDispatcher) {
             try {
                 val keys = sourceTextMap.keys.toList()
-
-                // Write MTool JSON: {key: translated} with pretty print
-                val outputJson = JSONObject()
-                for (i in keys.indices) {
-                    val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
-                    outputJson.put(keys[i], translated)
-                }
-                val content = outputJson.toString(2)
-
-                context.contentResolver
+                val outputStream = context.contentResolver
                     .openOutputStream(uri)
-                    ?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
                     ?: throw IOException("Cannot open output file")
+
+                outputStream.use { os ->
+                    val writer = com.mtt.app.data.io.StreamingJsonWriter(os)
+                    writer.use { w ->
+                        w.writeBegin()
+                        for (i in keys.indices) {
+                            val key = keys[i]
+                            val translated = (translatedResults.getOrElse(i) { sourceTextMap[key] ?: "" })
+                            w.writeEntry(key, translated)
+                        }
+                        w.writeEnd()
+                    }
+                }
 
                 _uiState.value = TranslationUiState.Completed
             } catch (e: Exception) {
@@ -475,6 +486,60 @@ class TranslationViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    // ── Glossary Extraction ──────────────────────────
+
+    /**
+     * Extract terminology from loaded source texts using AI.
+     * Shows review dialog on success, error message on failure.
+     */
+    fun extractTerms() {
+        viewModelScope.launch {
+            _isExtracting.value = true
+            val texts = sourceTextRepository.sourceTexts.value
+            val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+
+            when (val result = extractTermsUseCase.extractTerms(texts, srcLang)) {
+                is com.mtt.app.core.error.Result.Success -> {
+                    _extractedTerms.value = result.data
+                    _showExtractionReview.value = true
+                }
+                is com.mtt.app.core.error.Result.Failure -> {
+                    _uiState.value = TranslationUiState.Error(
+                        "术语提取失败: ${result.exception.message}"
+                    )
+                }
+            }
+            _isExtracting.value = false
+        }
+    }
+
+    /**
+     * Confirm extraction and insert selected terms into database.
+     */
+    fun confirmExtraction(selected: List<com.mtt.app.data.model.ExtractedTerm>) {
+        val entities = selected.map { term ->
+            com.mtt.app.data.model.GlossaryEntryEntity(
+                id = 0,
+                projectId = "default_project",
+                sourceTerm = term.sourceTerm,
+                targetTerm = term.suggestedTarget,
+                matchType = com.mtt.app.data.model.GlossaryEntryEntity.MATCH_TYPE_EXACT
+            )
+        }
+        viewModelScope.launch {
+            glossaryDao.insertAll(entities)
+            _uiState.value = TranslationUiState.Completed
+        }
+        _showExtractionReview.value = false
+        _extractedTerms.value = emptyList()
+    }
+
+    /** Cancel extraction review, clearing extracted terms. */
+    fun cancelExtraction() {
+        _showExtractionReview.value = false
+        _extractedTerms.value = emptyList()
     }
 
     // ── Internal helpers ──────────────────────────

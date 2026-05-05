@@ -85,6 +85,9 @@ fun TranslationScreen(
     val selectedFileName by viewModel.selectedFileName.collectAsState()
     val currentModel by viewModel.currentModel.collectAsState()
     val prohibitionCount by viewModel.prohibitionCount.collectAsState()
+    val extractedTerms by viewModel.extractedTerms.collectAsState()
+    val showExtractionReview by viewModel.showExtractionReview.collectAsState()
+    val isExtracting by viewModel.isExtracting.collectAsState()
 
     // Reload settings when screen resumes (e.g., after returning from Settings)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -131,6 +134,7 @@ fun TranslationScreen(
         isTranslating = isTranslating,
         isPaused = isPaused,
         isCompleted = isCompleted,
+        isExtracting = isExtracting,
         sourceLang = viewModel.sourceLang,
         targetLang = viewModel.targetLang,
         onSourceLangChange = viewModel::updateSourceLang,
@@ -141,8 +145,19 @@ fun TranslationScreen(
         onPauseClick = viewModel::onPauseTranslation,
         onResumeClick = viewModel::onResumeTranslation,
         onExportClick = { exportLauncher.launch("translated.txt") },
+        onExtractTermsClick = viewModel::extractTerms,
         onNavigateToSettings = onNavigateToSettings
     )
+
+    // Extraction review dialog
+    if (showExtractionReview) {
+        com.mtt.app.ui.glossary.ExtractionReviewDialog(
+            terms = extractedTerms,
+            existingTerms = emptyList(), // let dialog show all candidates
+            onDismiss = { viewModel.cancelExtraction() },
+            onConfirm = { selected -> viewModel.confirmExtraction(selected) }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,6 +172,7 @@ private fun TranslationScreenContent(
     isTranslating: Boolean,
     isPaused: Boolean,
     isCompleted: Boolean,
+    isExtracting: Boolean = false,
     sourceLang: String,
     targetLang: String,
     onSourceLangChange: (String) -> Unit,
@@ -167,6 +183,7 @@ private fun TranslationScreenContent(
     onPauseClick: () -> Unit,
     onResumeClick: () -> Unit,
     onExportClick: () -> Unit,
+    onExtractTermsClick: () -> Unit = {},
     onNavigateToSettings: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -530,6 +547,27 @@ private fun TranslationScreenContent(
                     )
                 ) {
                     Text("导出")
+                }
+            }
+
+            // Glossary extraction button
+            if (selectedFileName != null && !isTranslating && !isCompleted) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onExtractTermsClick,
+                    enabled = !isTranslating && !isExtracting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isExtracting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("提取中...")
+                    } else {
+                        Text("从原文提取术语 (AI)")
+                    }
                 }
             }
 
