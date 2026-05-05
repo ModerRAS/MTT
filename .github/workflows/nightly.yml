@@ -36,14 +36,10 @@ jobs:
           fi
 
   build:
-    name: Build API ${{ matrix.api }}
+    name: Build
     needs: check-changes
     if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        api: [29, 34]
 
     steps:
       - name: Checkout code
@@ -76,6 +72,13 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Restore debug keystore
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.DEBUG_KEYSTORE }}
+        run: |
+          mkdir -p ~/.android
+          echo "$DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
@@ -85,21 +88,34 @@ jobs:
       - name: Run lint
         run: ./gradlew lint --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mtt-debug-${{ matrix.api }}-${{ github.run_date }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/reports/lint-results-debug.html
+          name: mtt-debug-${{ github.run_date }}
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
-      - name: Upload test report artifact
+      - name: Upload lint report
         uses: actions/upload-artifact@v4
         with:
-          name: mtt-test-report-${{ matrix.api }}-${{ github.run_date }}
+          name: mtt-lint-report-${{ github.run_date }}
+          path: app/build/reports/lint-results-debug.html
+          retention-days: 7
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtt-test-report-${{ github.run_date }}
           path: app/build/reports/tests/testDebugUnitTest/
           retention-days: 7
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="nightly-$(date +'%Y%m%d')"
+          gh release view "$TAG_NAME" 2>/dev/null || gh release create "$TAG_NAME" --title "Nightly Build $(date +'%Y-%m-%d')" --notes "Auto-built from commit ${{ github.sha }}"
+          gh release upload "$TAG_NAME" app/build/outputs/apk/debug/*.apk --clobber
 
       - name: Generate build metrics
         run: |
@@ -107,6 +123,6 @@ jobs:
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
           APK_SIZE=$(du -h app/build/outputs/apk/debug/*.apk 2>/dev/null | cut -f1 || echo "N/A")
-          echo "| APK Size (API ${{ matrix.api }}) | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
+          echo "| APK Size | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
           TEST_COUNT=$(find app/build/reports/tests/testDebugUnitTest -name "*.html" -exec grep -oP '\d+(?= tests)' {} + 2>/dev/null | head -1 || echo "N/A")
-          echo "| Test Count (API ${{ matrix.api }}) | $TEST_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Count | $TEST_COUNT |" >> $GITHUB_STEP_SUMMARY
