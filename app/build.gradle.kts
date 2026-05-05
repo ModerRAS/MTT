@@ -15,7 +15,8 @@ android {
         applicationId = "com.mtt.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
+        // Auto-increment versionCode with each build using Unix timestamp seconds
+        versionCode = (System.currentTimeMillis() / 1000).toInt()
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
