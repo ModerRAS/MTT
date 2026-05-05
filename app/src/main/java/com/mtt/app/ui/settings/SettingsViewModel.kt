@@ -116,7 +116,7 @@ class SettingsViewModel @Inject constructor(
             state.copy(
                 openAiSettings = ProviderSettings(
                     apiKey = openAiKey,
-                    baseUrl = "https://api.openai.com/v1",
+                    baseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) ?: "https://api.openai.com/v1",
                     selectedModel = selectedOpenAiModel,
                     availableModels = openAiModels,
                     defaultModel = ModelRegistry.defaultOpenAiModel,
@@ -124,7 +124,7 @@ class SettingsViewModel @Inject constructor(
                 ),
                 anthropicSettings = ProviderSettings(
                     apiKey = anthropicKey,
-                    baseUrl = "https://api.anthropic.com",
+                    baseUrl = secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL) ?: "https://api.anthropic.com",
                     selectedModel = selectedAnthropicModel,
                     availableModels = anthropicModels,
                     defaultModel = ModelRegistry.defaultAnthropicModel,
@@ -319,6 +319,12 @@ class SettingsViewModel @Inject constructor(
         ModelRegistry.addCustomModel(model)
         saveCustomModels()
         refreshModels()
+        // Auto-select the newly added model
+        if (isAnthropic) {
+            updateAnthropicModel(model)
+        } else {
+            updateOpenAiModel(model)
+        }
     }
 
     /**
@@ -384,7 +390,7 @@ class SettingsViewModel @Inject constructor(
                 
                 val provider = LlmProvider.OpenAI(settings.apiKey, settings.baseUrl)
                 val service = LlmServiceFactory.create(provider, openAiClient, anthropicClient)
-                val result = service.testConnection()
+                val result = service.testConnection(settings.selectedModel.modelId)
                 
                 _uiState.update { state ->
                     state.copy(
@@ -455,7 +461,7 @@ class SettingsViewModel @Inject constructor(
                 
                 val provider = LlmProvider.Anthropic(settings.apiKey, settings.baseUrl)
                 val service = LlmServiceFactory.create(provider, openAiClient, anthropicClient)
-                val result = service.testConnection()
+                val result = service.testConnection(settings.selectedModel.modelId)
                 
                 _uiState.update { state ->
                     state.copy(
@@ -497,6 +503,7 @@ class SettingsViewModel @Inject constructor(
         }
         // Use saveApiKey for backward compatibility (transform "openai_model" -> "key_openai_model")
         secureStorage.saveApiKey(SecureStorage.KEY_OPENAI_MODEL, state.openAiSettings.selectedModel.modelId)
+        secureStorage.saveValue(SecureStorage.KEY_OPENAI_BASE_URL, state.openAiSettings.baseUrl)
         
         // Save Anthropic settings
         if (state.anthropicSettings.apiKey.isNotBlank()) {
@@ -505,6 +512,7 @@ class SettingsViewModel @Inject constructor(
             secureStorage.clearApiKey(SecureStorage.PROVIDER_ANTHROPIC)
         }
         secureStorage.saveApiKey(SecureStorage.KEY_ANTHROPIC_MODEL, state.anthropicSettings.selectedModel.modelId)
+        secureStorage.saveValue(SecureStorage.KEY_ANTHROPIC_BASE_URL, state.anthropicSettings.baseUrl)
         
         // Save custom models
         saveCustomModels()

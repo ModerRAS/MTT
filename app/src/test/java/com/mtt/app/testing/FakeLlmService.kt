@@ -35,7 +35,7 @@ class FakeLlmService : LlmService {
         )
     }
 
-    override suspend fun testConnection(): Boolean = true
+    override suspend fun testConnection(modelId: String): Boolean = true
 
     /**
      * Extracts content between <textarea> and </textarea> tags.

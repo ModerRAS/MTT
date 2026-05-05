@@ -28,13 +28,13 @@ class OpenAiLlmService(
     }
 
     @Throws(ApiException::class, NetworkException::class)
-    override suspend fun testConnection(): Boolean {
+    override suspend fun testConnection(modelId: String): Boolean {
         val testConfig = LlmRequestConfig(
             messages = listOf(LlmRequestConfig.Message("user", "a")),
             systemPrompt = "Connection test",
             model = ModelInfo(
-                modelId = "gpt-4o-mini",
-                displayName = "GPT-4o Mini",
+                modelId = modelId,
+                displayName = modelId,
                 contextWindow = 128000,
                 provider = LlmProvider.OpenAI("", "")
             )

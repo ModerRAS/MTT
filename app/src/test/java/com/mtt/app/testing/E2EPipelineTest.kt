@@ -116,7 +116,7 @@ class E2EPipelineTest {
 
     @Test
     fun `FakeLlmService testConnection returns true`() = runBlocking {
-        assertTrue(fakeLlmService.testConnection())
+        assertTrue(fakeLlmService.testConnection("gpt-4o-mini"))
     }
 
     // ─────────────────────────────────────────────

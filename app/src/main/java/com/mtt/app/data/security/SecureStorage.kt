@@ -137,5 +137,9 @@ class SecureStorage(
         const val KEY_ANTHROPIC_MODEL = "anthropic_model"
         const val KEY_SOURCE_LANG = "source_lang"
         const val KEY_TARGET_LANG = "target_lang"
+
+        // Base URL keys
+        const val KEY_OPENAI_BASE_URL = "openai_base_url"
+        const val KEY_ANTHROPIC_BASE_URL = "anthropic_base_url"
     }
 }

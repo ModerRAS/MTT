@@ -29,13 +29,13 @@ class AnthropicLlmService(
     }
 
     @Throws(ApiException::class, NetworkException::class)
-    override suspend fun testConnection(): Boolean {
+    override suspend fun testConnection(modelId: String): Boolean {
         val testConfig = LlmRequestConfig(
             messages = listOf(LlmRequestConfig.Message("user", "a")),
             systemPrompt = "Connection test",
             model = ModelInfo(
-                modelId = "claude-3-5-haiku-20241022",
-                displayName = "Claude 3.5 Haiku",
+                modelId = modelId,
+                displayName = modelId,
                 contextWindow = 200000,
                 provider = LlmProvider.Anthropic("", "")
             )

@@ -29,8 +29,9 @@ interface LlmService {
     /**
      * Test connectivity by sending a minimal API call to verify the API key works.
      *
+     * @param modelId The model ID to use for the test request (e.g. "gpt-4o-mini")
      * @return true if the API key is valid and the service is reachable
      */
     @Throws(ApiException::class, NetworkException::class)
-    suspend fun testConnection(): Boolean
+    suspend fun testConnection(modelId: String): Boolean
 }
