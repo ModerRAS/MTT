@@ -26,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -160,7 +161,9 @@ class TranslationViewModel @Inject constructor(
 
         // Defer to a coroutine so ALL property initializers (including those declared
         // after the init block) have had a chance to run before we use them.
-        viewModelScope.launch {
+        // Note: ioDispatcher is declared after init so we can't use it here.
+        // Use Default dispatcher to avoid ANR on large file loads.
+        viewModelScope.launch(Dispatchers.Default) {
             try {
                 sourceTexts = pendingTexts
                 sourceTextMap = pendingMap
@@ -420,10 +423,14 @@ class TranslationViewModel @Inject constructor(
 
         _uiState.value = TranslationUiState.Translating(_progress.value)
 
+        // Run the pipeline off the main thread to avoid ANR on large files.
+        // handleBatchResult updates StateFlows which are thread-safe.
+        // Note: use ioDispatcher (Dispatchers.IO in prod, testDispatcher in tests)
+        // so that unit tests can control execution via StandardTestDispatcher.
         translationJob = viewModelScope.launch {
-            translateTexts(sourceTexts, config).collect { result ->
-                handleBatchResult(result)
-            }
+            translateTexts(sourceTexts, config)
+                .flowOn(ioDispatcher)
+                .collect { result -> handleBatchResult(result) }
         }
     }
 
