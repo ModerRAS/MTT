@@ -30,17 +30,6 @@ class AnthropicLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun testConnection(modelId: String): Boolean {
-        val testConfig = LlmRequestConfig(
-            messages = listOf(LlmRequestConfig.Message("user", "a")),
-            systemPrompt = "Connection test",
-            model = ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 200000,
-                provider = LlmProvider.Anthropic("", "")
-            )
-        )
-        translate(testConfig)
-        return true
+        return anthropicClient.testConnectionDirect(modelId)
     }
 }

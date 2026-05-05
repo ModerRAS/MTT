@@ -29,17 +29,6 @@ class OpenAiLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun testConnection(modelId: String): Boolean {
-        val testConfig = LlmRequestConfig(
-            messages = listOf(LlmRequestConfig.Message("user", "a")),
-            systemPrompt = "Connection test",
-            model = ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 128000,
-                provider = LlmProvider.OpenAI("", "")
-            )
-        )
-        translate(testConfig)
-        return true
+        return openAiClient.testConnectionDirect(modelId)
     }
 }

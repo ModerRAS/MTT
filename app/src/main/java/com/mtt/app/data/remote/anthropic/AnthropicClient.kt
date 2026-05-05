@@ -8,7 +8,10 @@ import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationResponse
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.time.Duration
 
@@ -42,6 +45,29 @@ class AnthropicClient(
             .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
             .putHeader("anthropic-version", ANTHROPIC_VERSION)
             .build()
+    }
+
+    /**
+     * Test connection by making a direct HTTP call using our OkHttpClient.
+     * Bypasses the Anthropic Java SDK to ensure our interceptors and timeouts are used.
+     */
+    fun testConnectionDirect(model: String): Boolean {
+        val jsonBody = """{"model":"$model","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"""
+        val url = baseUrl.trimEnd('/') + "/messages"
+        val request = Request.Builder()
+            .url(url)
+            .header("x-api-key", apiKey)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("Content-Type", "application/json")
+            .post(jsonBody.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val response = okHttpClient.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+            throw ApiException(response.code, "HTTP ${response.code}: $body")
+        }
+        return true
     }
 
     /**
