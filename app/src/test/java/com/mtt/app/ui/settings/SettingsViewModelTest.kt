@@ -45,6 +45,8 @@ class SettingsViewModelTest {
         
         // Mock empty storage by default
         every { secureStorage.getApiKey(any()) } returns null
+        every { secureStorage.getValue(any()) } returns null
+        every { secureStorage.getCustomModels() } returns null
         
         viewModel = SettingsViewModel(secureStorage, httpClientFactory)
     }
@@ -75,15 +77,19 @@ class SettingsViewModelTest {
         every { secureStorage.getApiKey("anthropic") } returns "saved-anthropic-key"
         every { secureStorage.getApiKey("openai_model") } returns "gpt-4o"
         every { secureStorage.getApiKey("anthropic_model") } returns "claude-3-5-sonnet-20241022"
+        every { secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) } returns "https://api.openai.com/v1"
+        every { secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL) } returns "https://api.anthropic.com"
         
         val viewModel = SettingsViewModel(secureStorage, httpClientFactory)
         val state = viewModel.uiState.value
         
         assertEquals("saved-openai-key", state.openAiSettings.apiKey)
         assertEquals("gpt-4o", state.openAiSettings.selectedModel.modelId)
+        assertEquals("https://api.openai.com/v1", state.openAiSettings.baseUrl)
         
         assertEquals("saved-anthropic-key", state.anthropicSettings.apiKey)
         assertEquals("claude-3-5-sonnet-20241022", state.anthropicSettings.selectedModel.modelId)
+        assertEquals("https://api.anthropic.com", state.anthropicSettings.baseUrl)
     }
 
     @Test
