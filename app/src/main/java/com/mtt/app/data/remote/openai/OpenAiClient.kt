@@ -5,15 +5,13 @@ import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationResponse
-import com.openai.client.OpenAIClient
-import com.openai.client.okhttp.OpenAIOkHttpClient
-import com.openai.models.chat.completions.ChatCompletionCreateParams
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
-import java.time.Duration
 
 /**
  * OpenAI API client for translation using the official openai-java SDK.
@@ -30,20 +28,12 @@ class OpenAiClient(
     private val apiKey: String,
     private val baseUrl: String = "https://api.openai.com/v1"
 ) {
-    private val client: OpenAIClient by lazy {
-        OpenAIOkHttpClient.builder()
-            .apiKey(apiKey)
-            .baseUrl(baseUrl)
-            .maxRetries(0) // Retry is handled by HttpClientFactory's RetryInterceptor
-            .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
-            .build()
-    }
-
     /**
-     * Translate text using the OpenAI Chat Completions API (non-streaming).
+     * Translate text using the OpenAI-compatible Chat Completions API (non-streaming).
      *
-     * Messages are built with system message FIRST, followed by user messages —
-     * matching the pattern from AiNiee OpenaiRequester.py lines 188-195.
+     * Uses our OkHttpClient directly so that LoggingInterceptor, RetryInterceptor,
+     * and custom timeouts are applied. Bypasses the OpenAI Java SDK which creates
+     * its own internal HTTP client ignoring our configuration.
      *
      * @param messages User messages to translate
      * @param systemPrompt System prompt for translation instructions
@@ -59,53 +49,101 @@ class OpenAiClient(
         model: String
     ): TranslationResponse {
         try {
-            val params = buildCreateParams(messages, systemPrompt, model)
-            val completion = client.chat().completions().create(params)
+            val jsonBody = buildJsonBody(messages, systemPrompt, model)
+            val url = baseUrl.trimEnd('/') + "/chat/completions"
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Content-Type", "application/json")
+                .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                .build()
 
-            val content = StringBuilder()
-            for (choice in completion.choices()) {
-                choice.message().content().ifPresent { content.append(it) }
+            val response = okHttpClient.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                throw ApiException(response.code, body.ifEmpty { "HTTP ${response.code}" })
             }
 
-            val tokensUsed = completion.usage()
-                .map { usage -> usage.promptTokens() + usage.completionTokens() }
-                .orElse(0)
-                .toInt()
+            val json = JSONObject(body)
+            val choices = json.optJSONArray("choices")
+            val content = if (choices != null && choices.length() > 0) {
+                choices.getJSONObject(0)
+                    .optJSONObject("message")
+                    ?.optString("content", "") ?: ""
+            } else ""
+
+            val usage = json.optJSONObject("usage")
+            val tokensUsed = if (usage != null) {
+                usage.optInt("prompt_tokens", 0) + usage.optInt("completion_tokens", 0)
+            } else 0
 
             return TranslationResponse(
-                content = content.toString(),
+                content = content,
                 model = model,
                 tokensUsed = tokensUsed
             )
         } catch (e: IOException) {
             AppLogger.e(TAG, "OpenAI translate IOException: ${e.message}", e)
             throw NetworkException("网络连接失败，请检查网络: ${e.message}")
+        } catch (e: ApiException) {
+            // ApiException from non-successful HTTP response — re-map using code + body
+            AppLogger.e(TAG, "OpenAI translate HTTP error: ${e.code}: ${e.message}", e)
+            throw mapApiError(e)
         } catch (e: Exception) {
             AppLogger.e(TAG, "OpenAI translate failed: ${e.javaClass.simpleName}: ${e.message}", e)
             throw mapApiError(e)
         }
     }
 
-    private fun buildCreateParams(
+    /**
+     * Build a JSON request body for the chat completions API.
+     * Format: {"model":"...","messages":[{"role":"system","content":"..."},...]}
+     */
+    private fun buildJsonBody(
         messages: List<LlmRequestConfig.Message>,
         systemPrompt: String,
         model: String
-    ): ChatCompletionCreateParams {
-        val builder = ChatCompletionCreateParams.builder()
-            .model(model)
+    ): String {
+        val root = JSONObject()
+        root.put("model", model)
 
-        // FIRST: system message (matches AiNiee pattern — messages.insert(0, system_msg))
-        builder.addSystemMessage(systemPrompt)
+        val msgs = JSONArray()
+        // System message first (matches AiNiee pattern)
+        val sysMsg = JSONObject()
+        sysMsg.put("role", "system")
+        sysMsg.put("content", systemPrompt)
+        msgs.put(sysMsg)
 
-        // THEN: user messages from conversation history
-        for (message in messages) {
-            builder.addUserMessage(message.content)
+        // User messages
+        for (msg in messages) {
+            val userMsg = JSONObject()
+            userMsg.put("role", msg.role)
+            userMsg.put("content", msg.content)
+            msgs.put(userMsg)
         }
 
-        return builder.build()
+        root.put("messages", msgs)
+        return root.toString()
     }
 
     private fun mapApiError(e: Exception): Exception {
+        // If it's already an ApiException with a real status code, preserve the code
+        if (e is ApiException && e.code > 0) {
+            val msg = e.message ?: ""
+            return when {
+                e.code == 401 || msg.contains("unauthorized", ignoreCase = true) ->
+                    ApiException.authFailure()
+                e.code == 429 || msg.contains("rate", ignoreCase = true) ->
+                    ApiException.rateLimit()
+                e.code in 500..599 ->
+                    ApiException.serverError()
+                e.code == 403 ->
+                    ApiException.forbidden()
+                else ->
+                    ApiException(e.code, "API 请求失败: $msg")
+            }
+        }
+        // Generic exceptions — match by message patterns
         val message = e.message ?: ""
         val errorType = e.javaClass.simpleName
         return when {
