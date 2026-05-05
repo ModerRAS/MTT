@@ -275,15 +275,26 @@ class TranslationViewModel @Inject constructor(
                     ?.use { it.bufferedReader().readText() }
                     ?: throw IOException("Cannot open file")
 
-                // Parse MTool JSON format: { "source": "source", ... }
-                // where key=source text, value=current translation (initially same as key)
-                val json = JSONObject(content.trim())
-                val keys = json.keys()
-                val map = LinkedHashMap<String, String>()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    val value = json.optString(key, key)
-                    map[key] = value
+                val trimmed = content.trim()
+                val map: LinkedHashMap<String, String>
+
+                // Try parsing as MTool JSON: { "source": "source", ... }
+                // Fall back to plain text (one line = one text) for backward compatibility
+                if (trimmed.startsWith("{")) {
+                    val json = JSONObject(trimmed)
+                    val keys = json.keys()
+                    map = LinkedHashMap()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        map[key] = json.optString(key, key)
+                    }
+                } else {
+                    // Plain text: each non-empty line is a separate text
+                    val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                    map = LinkedHashMap()
+                    lines.forEachIndexed { index, line ->
+                        map[index.toString()] = line
+                    }
                 }
 
                 sourceTextMap = map
@@ -377,14 +388,22 @@ class TranslationViewModel @Inject constructor(
     fun onExportResult(uri: Uri) {
         viewModelScope.launch(ioDispatcher) {
             try {
-                // Rebuild MTool JSON: map original keys to translated values
                 val keys = sourceTextMap.keys.toList()
-                val outputJson = JSONObject()
-                for (i in keys.indices) {
-                    val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
-                    outputJson.put(keys[i], translated)
+                val isJsonFormat = keys.isNotEmpty() && keys.first().toIntOrNull() == null
+                val content: String
+
+                if (isJsonFormat) {
+                    // MTool JSON: write {key: translated} with pretty print
+                    val outputJson = JSONObject()
+                    for (i in keys.indices) {
+                        val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
+                        outputJson.put(keys[i], translated)
+                    }
+                    content = outputJson.toString(2)
+                } else {
+                    // Plain text: one translation per line
+                    content = translatedResults.joinToString("\n")
                 }
-                val content = outputJson.toString(2) // pretty-print with 2-space indent
 
                 context.contentResolver
                     .openOutputStream(uri)
