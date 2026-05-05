@@ -15,8 +15,8 @@ android {
         applicationId = "com.mtt.app"
         minSdk = 29
         targetSdk = 35
-        // Auto-increment versionCode with each build using Unix timestamp seconds
-        versionCode = (System.currentTimeMillis() / 1000).toInt()
+        // Use CI run number for sequential versionCode, fallback to timestamp for local builds
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: (System.currentTimeMillis() / 1000).toString()).toInt()
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -26,6 +26,18 @@ android {
 
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            val keystoreFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
