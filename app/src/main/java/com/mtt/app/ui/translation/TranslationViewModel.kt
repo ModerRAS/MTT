@@ -276,24 +276,16 @@ class TranslationViewModel @Inject constructor(
                     ?: throw IOException("Cannot open file")
 
                 val trimmed = content.trim()
-                val map: LinkedHashMap<String, String>
 
-                // Try parsing as MTool JSON: { "source": "source", ... }
-                // Fall back to plain text (one line = one text) for backward compatibility
-                if (trimmed.startsWith("{")) {
-                    val json = JSONObject(trimmed)
-                    val keys = json.keys()
-                    map = LinkedHashMap()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
+                // Parse MTool JSON format: { "source": "source", ... }
+                // where key=source text, value=current translation (initially same as key)
+                val json = JSONObject(trimmed)
+                val namesArray = json.names()
+                val map = LinkedHashMap<String, String>()
+                if (namesArray != null) {
+                    for (i in 0 until namesArray.length()) {
+                        val key = namesArray.getString(i)
                         map[key] = json.optString(key, key)
-                    }
-                } else {
-                    // Plain text: each non-empty line is a separate text
-                    val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                    map = LinkedHashMap()
-                    lines.forEachIndexed { index, line ->
-                        map[index.toString()] = line
                     }
                 }
 
@@ -389,21 +381,14 @@ class TranslationViewModel @Inject constructor(
         viewModelScope.launch(ioDispatcher) {
             try {
                 val keys = sourceTextMap.keys.toList()
-                val isJsonFormat = keys.isNotEmpty() && keys.first().toIntOrNull() == null
-                val content: String
 
-                if (isJsonFormat) {
-                    // MTool JSON: write {key: translated} with pretty print
-                    val outputJson = JSONObject()
-                    for (i in keys.indices) {
-                        val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
-                        outputJson.put(keys[i], translated)
-                    }
-                    content = outputJson.toString(2)
-                } else {
-                    // Plain text: one translation per line
-                    content = translatedResults.joinToString("\n")
+                // Write MTool JSON: {key: translated} with pretty print
+                val outputJson = JSONObject()
+                for (i in keys.indices) {
+                    val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
+                    outputJson.put(keys[i], translated)
                 }
+                val content = outputJson.toString(2)
 
                 context.contentResolver
                     .openOutputStream(uri)

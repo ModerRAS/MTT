@@ -30,6 +30,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -42,6 +45,8 @@ import java.io.IOException
  * replaces both [Dispatchers.Main] and the ViewModel's [ioDispatcher].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class TranslationViewModelTest {
 
     // ── Test doubles ──────────────────────────────
@@ -68,7 +73,7 @@ class TranslationViewModelTest {
 
     private val testUri: Uri = mockk(relaxed = true)
     private val testLines = listOf("Hello", "World", "Test")
-    private val testFileContent = testLines.joinToString("\n")
+    private val testFileContent = """{"Hello":"Hello","World":"World","Test":"Test"}"""
 
     // ── Setup / teardown ──────────────────────────
 
@@ -139,14 +144,14 @@ class TranslationViewModelTest {
     }
 
     @Test
-    fun `onFileSelected skips empty lines`() = runTest {
-        val content = "\n  Hello  \n\n  World  \n  \n"
+    fun `onFileSelected parses JSON key-value pairs`() = runTest {
+        val content = """{"key1":"text1","key2":"text2","key3":"text3"}"""
         mockFileInputStream(content)
 
         viewModel.onFileSelected(testUri)
         advanceUntilIdle()
 
-        assertEquals(2, viewModel.progress.value.totalItems)
+        assertEquals(3, viewModel.progress.value.totalItems)
     }
 
     // ═══════════════════════════════════════════════
@@ -372,7 +377,11 @@ class TranslationViewModelTest {
         advanceUntilIdle()
 
         val exported = outputStream.toString(Charsets.UTF_8.name())
-        assertEquals("Hola\nMundo\nTest", exported)
+        assertEquals("""{
+  "Hello": "Hola",
+  "World": "Mundo",
+  "Test": "Test"
+}""", exported)
         assertEquals(TranslationUiState.Completed, viewModel.uiState.value)
     }
 
@@ -428,7 +437,12 @@ class TranslationViewModelTest {
 
         viewModel.onExportResult(exportUri)
         advanceUntilIdle()
-        assertEquals("Hola\nMundo\nTest", outputStream.toString(Charsets.UTF_8.name()))
+        val expected = """{
+  "Hello": "Hola",
+  "World": "Mundo",
+  "Test": "Test"
+}"""
+        assertEquals(expected, outputStream.toString(Charsets.UTF_8.name()))
     }
 
     @Test
@@ -478,7 +492,7 @@ class TranslationViewModelTest {
         assertEquals(3, viewModel.progress.value.totalItems)
 
         // Select new file
-        val newContent = "One\nTwo\nThree\nFour\nFive"
+        val newContent = """{"One":"One","Two":"Two","Three":"Three","Four":"Four","Five":"Five"}"""
         mockFileInputStream(newContent)
         viewModel.onFileSelected(mockk<Uri>(relaxed = true))
         advanceUntilIdle()
