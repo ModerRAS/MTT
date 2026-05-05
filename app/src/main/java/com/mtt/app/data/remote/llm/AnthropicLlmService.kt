@@ -2,11 +2,11 @@ package com.mtt.app.data.remote.llm
 
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
-import com.mtt.app.data.model.LlmProvider
 import com.mtt.app.data.model.LlmRequestConfig
-import com.mtt.app.data.model.ModelInfo
 import com.mtt.app.data.model.TranslationResponse
 import com.mtt.app.data.remote.anthropic.AnthropicClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Anthropic implementation of [LlmService].
@@ -30,6 +30,8 @@ class AnthropicLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun testConnection(modelId: String): Boolean {
-        return anthropicClient.testConnectionDirect(modelId)
+        return withContext(Dispatchers.IO) {
+            anthropicClient.testConnectionDirect(modelId)
+        }
     }
 }

@@ -2,11 +2,11 @@ package com.mtt.app.data.remote.llm
 
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
-import com.mtt.app.data.model.LlmProvider
-import com.mtt.app.data.model.LlmRequestConfig
-import com.mtt.app.data.model.ModelInfo
 import com.mtt.app.data.model.TranslationResponse
+import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.remote.openai.OpenAiClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * OpenAI implementation of [LlmService].
@@ -29,6 +29,8 @@ class OpenAiLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun testConnection(modelId: String): Boolean {
-        return openAiClient.testConnectionDirect(modelId)
+        return withContext(Dispatchers.IO) {
+            openAiClient.testConnectionDirect(modelId)
+        }
     }
 }
