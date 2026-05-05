@@ -27,6 +27,22 @@ object ModelRegistry {
         provider = LlmProvider.OpenAI("", "")
     )
 
+    /** DeepSeek Chat — DeepSeek's latest model (64K context) */
+    val DEEPSEEK_CHAT = ModelInfo(
+        modelId = "deepseek-chat",
+        displayName = "DeepSeek Chat",
+        contextWindow = 64000,
+        provider = LlmProvider.OpenAI("", "")
+    )
+
+    /** DeepSeek Reasoner — DeepSeek's reasoning model (64K context) */
+    val DEEPSEEK_REASONER = ModelInfo(
+        modelId = "deepseek-reasoner",
+        displayName = "DeepSeek Reasoner",
+        contextWindow = 64000,
+        provider = LlmProvider.OpenAI("", "")
+    )
+
     /** Claude 3.5 Sonnet — high-capability Anthropic model (200K context) */
     val CLAUDE_SONNET = ModelInfo(
         modelId = "claude-3-5-sonnet-20241022",
@@ -44,7 +60,7 @@ object ModelRegistry {
     )
 
     /** All preset (built-in) models */
-    val presetModels: List<ModelInfo> = listOf(GPT_4O, GPT_4O_MINI, CLAUDE_SONNET, CLAUDE_HAIKU)
+    val presetModels: List<ModelInfo> = listOf(GPT_4O, GPT_4O_MINI, DEEPSEEK_CHAT, DEEPSEEK_REASONER, CLAUDE_SONNET, CLAUDE_HAIKU)
 
     /** User-defined custom models (loaded from SecureStorage at runtime). */
     val customModels: MutableList<ModelInfo> = mutableListOf()
@@ -52,8 +68,8 @@ object ModelRegistry {
     /** Combined list: preset + custom models */
     val allModels: List<ModelInfo> get() = presetModels + customModels
 
-    /** Default OpenAI model: GPT-4o Mini */
-    val defaultOpenAiModel: ModelInfo get() = GPT_4O_MINI
+    /** Default OpenAI model: DeepSeek Chat */
+    val defaultOpenAiModel: ModelInfo get() = DEEPSEEK_CHAT
 
     /** Default Anthropic model: Claude 3.5 Haiku */
     val defaultAnthropicModel: ModelInfo get() = CLAUDE_HAIKU

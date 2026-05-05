@@ -61,7 +61,7 @@ class SettingsViewModelTest {
         val state = viewModel.uiState.value
         
         assertEquals("", state.openAiSettings.apiKey)
-        assertEquals("https://api.openai.com/v1", state.openAiSettings.baseUrl)
+        assertEquals("https://api.deepseek.com", state.openAiSettings.baseUrl)
         assertEquals(ModelRegistry.defaultOpenAiModel, state.openAiSettings.selectedModel)
         assertTrue(state.openAiSettings.availableModels.isNotEmpty())
         
@@ -318,7 +318,7 @@ class SettingsViewModelTest {
         val openAiModels = state.openAiSettings.availableModels
         val anthropicModels = state.anthropicSettings.availableModels
         
-        assertTrue(openAiModels.all { it.modelId.startsWith("gpt-") })
+        assertTrue(openAiModels.all { it.modelId.startsWith("gpt-") || it.modelId.startsWith("deepseek-") })
         assertTrue(anthropicModels.all { it.modelId.startsWith("claude-") })
     }
 

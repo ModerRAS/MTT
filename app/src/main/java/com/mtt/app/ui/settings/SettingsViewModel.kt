@@ -116,7 +116,7 @@ class SettingsViewModel @Inject constructor(
             state.copy(
                 openAiSettings = ProviderSettings(
                     apiKey = openAiKey,
-                    baseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) ?: "https://api.openai.com/v1",
+                    baseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) ?: "https://api.deepseek.com",
                     selectedModel = selectedOpenAiModel,
                     availableModels = openAiModels,
                     defaultModel = ModelRegistry.defaultOpenAiModel,
@@ -579,10 +579,10 @@ data class ProviderSettings(
 ) {
     companion object {
         fun createOpenAiSettings(): ProviderSettings = ProviderSettings(
-            baseUrl = "https://api.openai.com/v1",
+            baseUrl = "https://api.deepseek.com",
             selectedModel = ModelRegistry.defaultOpenAiModel,
             defaultModel = ModelRegistry.defaultOpenAiModel,
-            defaultBaseUrl = "https://api.openai.com/v1"
+            defaultBaseUrl = "https://api.deepseek.com"
         )
         
         fun createAnthropicSettings(): ProviderSettings = ProviderSettings(
