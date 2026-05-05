@@ -186,6 +186,9 @@ class TranslationViewModel @Inject constructor(
     /** Texts loaded from the source file, ready for translation. */
     private var sourceTexts: List<String> = emptyList()
 
+    /** Original key-value map from the MTool JSON (key=source, value=translation). */
+    private var sourceTextMap: Map<String, String> = emptyMap()
+
     /** Accumulated translation results (indexed 1:1 with [sourceTexts]). */
     private var translatedResults: List<String> = emptyList()
 
@@ -256,7 +259,7 @@ class TranslationViewModel @Inject constructor(
     // ── Events ────────────────────────────────────
 
     /**
-     * Read the file at [uri] and extract texts (one per non-empty line).
+     * Read the file at [uri] and extract texts from MTool JSON (key=source, value=translation).
      *
      * Emits [TranslationUiState.Loading] while reading, then transitions to
      * [TranslationUiState.Idle] on success or [TranslationUiState.Error] on failure.
@@ -272,13 +275,22 @@ class TranslationViewModel @Inject constructor(
                     ?.use { it.bufferedReader().readText() }
                     ?: throw IOException("Cannot open file")
 
-                sourceTexts = content.lines()
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
+                // Parse MTool JSON format: { "source": "source", ... }
+                // where key=source text, value=current translation (initially same as key)
+                val json = JSONObject(content.trim())
+                val keys = json.keys()
+                val map = LinkedHashMap<String, String>()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = json.optString(key, key)
+                    map[key] = value
+                }
+
+                sourceTextMap = map
+                sourceTexts = map.values.toList()
 
                 // Store source texts in repository for cross-ViewModel access
-                val textMap = sourceTexts.mapIndexed { index, text -> index.toString() to text }.toMap()
-                sourceTextRepository.setSourceTexts(textMap)
+                sourceTextRepository.setSourceTexts(map)
 
                 translatedResults = emptyList()
 
@@ -365,7 +377,15 @@ class TranslationViewModel @Inject constructor(
     fun onExportResult(uri: Uri) {
         viewModelScope.launch(ioDispatcher) {
             try {
-                val content = translatedResults.joinToString("\n")
+                // Rebuild MTool JSON: map original keys to translated values
+                val keys = sourceTextMap.keys.toList()
+                val outputJson = JSONObject()
+                for (i in keys.indices) {
+                    val translated = translatedResults.getOrElse(i) { sourceTextMap[keys[i]] ?: "" }
+                    outputJson.put(keys[i], translated)
+                }
+                val content = outputJson.toString(2) // pretty-print with 2-space indent
+
                 context.contentResolver
                     .openOutputStream(uri)
                     ?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
