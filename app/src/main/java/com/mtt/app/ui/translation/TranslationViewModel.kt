@@ -83,6 +83,7 @@ class TranslationViewModel @Inject constructor(
         // the ViewModel, these must be invoked manually after construction.
         loadCustomModelsFromStorage()
         loadModelFromSettings()
+        tryAutoStartTranslation()
     }
 
     /**
@@ -130,6 +131,53 @@ class TranslationViewModel @Inject constructor(
             // Silently ignore parsing errors - custom models simply won't be available
         }
     }
+
+    /**
+     * Check if a pending auto-load was set by MTTApplication for debug/testing.
+     * If so, load the source texts and auto-start translation.
+     *
+     * NOTE: This is called from init. Properties declared after the init block in
+     * this class (sourceTexts, sourceTextMap, sourceLang, targetLang, glossaryEntries,
+     * etc.) have NOT been initialized yet. We defer to a coroutine to ensure full init.
+     */
+    private fun tryAutoStartTranslation() {
+        val autoData = pendingAutoLoad ?: return
+        pendingAutoLoad = null
+
+        val pendingTexts = autoData.sourceTexts
+        val pendingMap = autoData.sourceTextMap
+        val pendingName = autoData.fileName
+
+        // Defer to a coroutine so ALL property initializers (including those declared
+        // after the init block) have had a chance to run before we use them.
+        viewModelScope.launch {
+            try {
+                sourceTexts = pendingTexts
+                sourceTextMap = pendingMap
+                _selectedFileName.value = pendingName
+
+                _progress.update {
+                    it.copy(
+                        totalItems = sourceTexts.size,
+                        completedItems = 0,
+                        status = "Ready"
+                    )
+                }
+
+                // Store source texts in repository for cross-ViewModel access
+                sourceTextRepository.setSourceTexts(pendingMap)
+
+                if (sourceTexts.isNotEmpty()) {
+                    onStartTranslation()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Auto-start translation failed", e)
+                _uiState.value = TranslationUiState.Error("自动翻译启动失败: ${e.message}")
+            }
+        }
+    }
+
+
 
     /**
      * Reload settings from SecureStorage (model selection, languages).
@@ -216,32 +264,50 @@ class TranslationViewModel @Inject constructor(
     /**
      * Load the saved model configuration from SecureStorage.
      * Falls back to ModelRegistry defaults if nothing is saved.
+     * Embeds the actual API key and base URL from SecureStorage into the [LlmProvider]
+     * since preset models in ModelRegistry have empty credentials.
      * Updates [_currentModel] StateFlow with the loaded model.
      */
     private fun loadModelFromSettings() {
         val openAiKey = secureStorage.getApiKey(SecureStorage.PROVIDER_OPENAI)
         val anthropicKey = secureStorage.getApiKey(SecureStorage.PROVIDER_ANTHROPIC)
+        val openAiBaseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL)
+            ?: LlmProvider.OpenAI("", "").baseUrl
+        val anthropicBaseUrl = secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL)
+            ?: LlmProvider.Anthropic("", "").baseUrl
 
         modelInfo = if (anthropicKey?.isNotBlank() == true && openAiKey?.isNotBlank() != true) {
             // Anthropic is configured (has key, OpenAI doesn't)
             val modelId = secureStorage.getApiKey(SecureStorage.KEY_ANTHROPIC_MODEL)
                 ?: ModelRegistry.defaultAnthropicModel.modelId
-            ModelRegistry.getById(modelId) ?: ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 200000,
-                provider = LlmProvider.Anthropic(anthropicKey)
-            )
+            val baseModel = ModelRegistry.getById(modelId)
+            if (baseModel != null) {
+                // Augment preset model with actual credentials
+                baseModel.copy(provider = LlmProvider.Anthropic(anthropicKey, anthropicBaseUrl))
+            } else {
+                ModelInfo(
+                    modelId = modelId,
+                    displayName = modelId,
+                    contextWindow = 200000,
+                    provider = LlmProvider.Anthropic(anthropicKey, anthropicBaseUrl)
+                )
+            }
         } else {
             // Default to OpenAI (or both configured, use OpenAI)
             val modelId = secureStorage.getApiKey(SecureStorage.KEY_OPENAI_MODEL)
                 ?: ModelRegistry.defaultOpenAiModel.modelId
-            ModelRegistry.getById(modelId) ?: ModelInfo(
-                modelId = modelId,
-                displayName = modelId,
-                contextWindow = 128000,
-                provider = LlmProvider.OpenAI(openAiKey ?: "")
-            )
+            val baseModel = ModelRegistry.getById(modelId)
+            if (baseModel != null) {
+                // Augment preset model with actual credentials
+                baseModel.copy(provider = LlmProvider.OpenAI(openAiKey ?: "", openAiBaseUrl))
+            } else {
+                ModelInfo(
+                    modelId = modelId,
+                    displayName = modelId,
+                    contextWindow = 128000,
+                    provider = LlmProvider.OpenAI(openAiKey ?: "", openAiBaseUrl)
+                )
+            }
         }
         _currentModel.value = modelInfo
     }
@@ -329,12 +395,19 @@ class TranslationViewModel @Inject constructor(
         // Cancel any in-flight translation
         translationJob?.cancel()
 
+        // Defensive: cast to nullable in case JVM-level null snuck into Kotlin non-null types
+        val safeMode = (_currentMode.value as? TranslationMode) ?: TranslationMode.TRANSLATE
+        val safeModel = (_currentModel.value as? ModelInfo) ?: ModelRegistry.defaultOpenAiModel
+        val safeSourceLang = (sourceLang as? String) ?: "日语"
+        val safeTargetLang = (targetLang as? String) ?: "中文"
+        val safeGlossary = (glossaryEntries as? List<GlossaryEntryEntity>) ?: emptyList()
+
         val config = TranslationConfig(
-            mode = _currentMode.value,
-            model = _currentModel.value ?: ModelRegistry.defaultOpenAiModel,
-            sourceLang = sourceLang,
-            targetLang = targetLang,
-            glossaryEntries = glossaryEntries,
+            mode = safeMode,
+            model = safeModel,
+            sourceLang = safeSourceLang,
+            targetLang = safeTargetLang,
+            glossaryEntries = safeGlossary,
             temperature = temperature,
             maxTokens = maxTokens
         )
@@ -458,5 +531,26 @@ class TranslationViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * Data for debug/testing auto-load from MTTApplication.
+     * Set by MTTApplication.tryAutoConfigure() before the ViewModel is created.
+     */
+    data class AutoLoadData(
+        val sourceTexts: List<String>,
+        val sourceTextMap: Map<String, String>,
+        val fileName: String
+    )
+
+    companion object {
+        private const val TAG = "TranslationVM"
+
+        /**
+         * Pending auto-load data set by MTTApplication from debug config.
+         * Consumed once in [tryAutoStartTranslation] during init.
+         */
+        @JvmStatic
+        var pendingAutoLoad: AutoLoadData? = null
     }
 }

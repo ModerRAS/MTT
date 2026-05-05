@@ -77,7 +77,7 @@ object TextPreprocessor {
     // ── Tag handling ───────────────────────────────────
 
     /** Matches AiNiee MTool tags: `{X-NAME}`, `{X-NAME-VALUE}`, `{X-ROLE}` etc. */
-    private val TAG_PATTERN = Regex("""\{X-[A-Z0-9_]+(?:-[A-Z0-9_]+)?}""")
+    private val TAG_PATTERN = Regex("""\{X-[A-Z0-9_]+(?:-[A-Z0-9_]+)?\}""")
 
     /** Prefix for generated placeholders, e.g. `[T0]`, `[T1]`. */
     private const val TAG_PLACEHOLDER_PREFIX = "[T"
