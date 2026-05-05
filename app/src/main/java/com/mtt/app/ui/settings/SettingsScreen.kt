@@ -86,7 +86,9 @@ fun SettingsScreen(
         onAnthropicKeyVisibilityToggle = viewModel::toggleAnthropicKeyVisibility,
         onAnthropicTestConnection = viewModel::testAnthropicConnection,
         onAddCustomModel = viewModel::addCustomModel,
-        onRemoveCustomModel = viewModel::removeCustomModel
+        onRemoveCustomModel = viewModel::removeCustomModel,
+        onBatchSizeChange = viewModel::updateBatchSize,
+        onConcurrencyChange = viewModel::updateConcurrency
     )
 }
 
@@ -106,7 +108,9 @@ private fun SettingsScreenContent(
     onAnthropicKeyVisibilityToggle: () -> Unit,
     onAnthropicTestConnection: () -> Unit,
     onAddCustomModel: (modelId: String, displayName: String, contextWindow: Int, isAnthropic: Boolean) -> Unit,
-    onRemoveCustomModel: (modelId: String) -> Unit
+    onRemoveCustomModel: (modelId: String) -> Unit,
+    onBatchSizeChange: (Int) -> Unit = {},
+    onConcurrencyChange: (Int) -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
 
@@ -156,6 +160,14 @@ private fun SettingsScreenContent(
                 onTestConnection = onAnthropicTestConnection,
                 onAddCustomModel = onAddCustomModel,
                 onRemoveCustomModel = onRemoveCustomModel
+            )
+
+            // Pipeline Config Section
+            PipelineConfigSection(
+                batchSize = uiState.batchSize,
+                concurrency = uiState.concurrency,
+                onBatchSizeChange = onBatchSizeChange,
+                onConcurrencyChange = onConcurrencyChange
             )
         }
     }
@@ -352,6 +364,83 @@ private fun ProviderSettingsSection(
                 showCustomModelDialog = false
             }
         )
+    }
+}
+
+/**
+ * Pipeline configuration section — batch size and concurrency controls.
+ */
+@Composable
+private fun PipelineConfigSection(
+    batchSize: Int,
+    concurrency: Int,
+    onBatchSizeChange: (Int) -> Unit,
+    onConcurrencyChange: (Int) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "流水线配置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Batch size slider
+            Text(
+                text = "每批文本数: $batchSize",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            androidx.compose.material3.Slider(
+                value = batchSize.toFloat(),
+                onValueChange = { onBatchSizeChange(it.toInt()) },
+                valueRange = 1f..200f,
+                steps = 198,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("1", style = MaterialTheme.typography.bodySmall)
+                Text("200", style = MaterialTheme.typography.bodySmall)
+            }
+
+            androidx.compose.material3.HorizontalDivider()
+
+            // Concurrency slider
+            Text(
+                text = "并行批次数: $concurrency",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            androidx.compose.material3.Slider(
+                value = concurrency.toFloat(),
+                onValueChange = { onConcurrencyChange(it.toInt()) },
+                valueRange = 1f..10f,
+                steps = 8,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("1", style = MaterialTheme.typography.bodySmall)
+                Text("10", style = MaterialTheme.typography.bodySmall)
+            }
+
+            Text(
+                text = "每批文本数控制单次 API 调用发送的文本量。并行批次数控制同时进行的 API 调用数（需注意 API 速率限制）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

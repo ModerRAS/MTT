@@ -112,8 +112,15 @@ class SettingsViewModel @Inject constructor(
         val selectedAnthropicModel = anthropicModels.find { it.modelId == savedAnthropicModelId }
             ?: ModelRegistry.defaultAnthropicModel
         
+        val savedBatchSize = secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE)
+            ?.toIntOrNull() ?: 50
+        val savedConcurrency = secureStorage.getValue(SecureStorage.KEY_CONCURRENCY)
+            ?.toIntOrNull() ?: 1
+
         _uiState.update { state ->
             state.copy(
+                batchSize = savedBatchSize.coerceIn(1, 200),
+                concurrency = savedConcurrency.coerceIn(1, 10),
                 openAiSettings = ProviderSettings(
                     apiKey = openAiKey,
                     baseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) ?: "https://api.deepseek.com",
@@ -516,6 +523,26 @@ class SettingsViewModel @Inject constructor(
         
         // Save custom models
         saveCustomModels()
+
+        // Save pipeline config
+        secureStorage.saveValue(SecureStorage.KEY_BATCH_SIZE, state.batchSize.toString())
+        secureStorage.saveValue(SecureStorage.KEY_CONCURRENCY, state.concurrency.toString())
+    }
+
+    // ── Pipeline Config ───────────────────────────
+
+    /**
+     * Update batch size (texts per API call).
+     */
+    fun updateBatchSize(size: Int) {
+        _uiState.update { it.copy(batchSize = size.coerceIn(1, 200)) }
+    }
+
+    /**
+     * Update concurrency (parallel batches).
+     */
+    fun updateConcurrency(count: Int) {
+        _uiState.update { it.copy(concurrency = count.coerceIn(1, 10)) }
     }
 
     /**
@@ -559,7 +586,9 @@ class SettingsViewModel @Inject constructor(
  */
 data class SettingsUiState(
     val openAiSettings: ProviderSettings = ProviderSettings.createOpenAiSettings(),
-    val anthropicSettings: ProviderSettings = ProviderSettings.createAnthropicSettings()
+    val anthropicSettings: ProviderSettings = ProviderSettings.createAnthropicSettings(),
+    val batchSize: Int = 50,
+    val concurrency: Int = 1
 )
 
 /**

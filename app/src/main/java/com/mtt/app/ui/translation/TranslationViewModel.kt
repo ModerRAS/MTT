@@ -411,6 +411,11 @@ class TranslationViewModel @Inject constructor(
         val safeTargetLang = (targetLang as? String) ?: "中文"
         val safeGlossary = (glossaryEntries as? List<GlossaryEntryEntity>) ?: emptyList()
 
+        val savedBatchSize = secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE)
+            ?.toIntOrNull() ?: 50
+        val savedConcurrency = secureStorage.getValue(SecureStorage.KEY_CONCURRENCY)
+            ?.toIntOrNull() ?: 1
+
         val config = TranslationConfig(
             mode = safeMode,
             model = safeModel,
@@ -418,7 +423,9 @@ class TranslationViewModel @Inject constructor(
             targetLang = safeTargetLang,
             glossaryEntries = safeGlossary,
             temperature = temperature,
-            maxTokens = maxTokens
+            maxTokens = maxTokens,
+            batchSize = savedBatchSize.coerceIn(1, 200),
+            concurrency = savedConcurrency.coerceIn(1, 10)
         )
 
         _uiState.value = TranslationUiState.Translating(_progress.value)

@@ -10,6 +10,8 @@ package com.mtt.app.data.model
  * @param glossaryEntries Glossary term entries for consistent translation
  * @param temperature LLM temperature (0.0–1.0, lower = more deterministic)
  * @param maxTokens Maximum output tokens per batch
+ * @param batchSize Number of texts to send in a single API call (1–200, default 50)
+ * @param concurrency Number of batches to process in parallel (1–10, default 1)
  */
 data class TranslationConfig(
     val mode: TranslationMode,
@@ -18,5 +20,7 @@ data class TranslationConfig(
     val targetLang: String,
     val glossaryEntries: List<GlossaryEntryEntity> = emptyList(),
     val temperature: Float = 0.3f,
-    val maxTokens: Int = 4096
+    val maxTokens: Int = 4096,
+    val batchSize: Int = 50,
+    val concurrency: Int = 1
 )

@@ -18,8 +18,12 @@ import com.mtt.app.data.remote.openai.OpenAiClient
 import com.mtt.app.domain.glossary.GlossaryEngine
 import com.mtt.app.domain.glossary.GlossaryEntry
 import com.mtt.app.domain.prompt.PromptBuilder
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,8 +32,8 @@ import javax.inject.Singleton
  * Orchestrates the full translation pipeline:
  * preprocess → build prompt → estimate tokens → rate limit → LLM call → validate → extract.
  *
- * On validation failure, retries with progressively smaller batches
- * up to [MAX_RETRIES] times. Emits progress via [BatchResult] flow.
+ * Chunks texts by [TranslationConfig.batchSize] and processes them with
+ * [TranslationConfig.concurrency] parallelism. Emits progress via [BatchResult] flow.
  *
  * @param llmService   Provider-specific LLM API client
  * @param rateLimiter  RPM/TPM rate limiter for API quota management
@@ -40,12 +44,9 @@ class TranslationExecutor @Inject constructor(
     private val rateLimiter: RateLimiter
 ) {
 
-    companion object {
-        /** Maximum retries per chunk before accepting partial result. */
-        const val MAX_RETRIES = 3
-
-        private const val MIN_BATCH_SIZE = 1
-    }
+    // ──────────────────────────────────────────────
+    //  LLM service management
+    // ──────────────────────────────────────────────
 
     /**
      * The LlmService is created dynamically from [TranslationConfig.model.provider]
@@ -76,6 +77,10 @@ class TranslationExecutor @Inject constructor(
         }
     }
 
+    // ──────────────────────────────────────────────
+    //  Public API
+    // ──────────────────────────────────────────────
+
     /**
      * Execute translation pipeline for a batch of texts.
      *
@@ -84,7 +89,7 @@ class TranslationExecutor @Inject constructor(
      * re-grouped per original text via [TextPreprocessor.postprocess].
      *
      * @param texts  Raw source texts to translate
-     * @param config Translation configuration (mode, model, languages, glossary)
+     * @param config Translation configuration (mode, model, languages, glossary, batchSize, concurrency)
      * @return Cold flow emitting [BatchResult] events as the pipeline progresses
      */
     fun executeBatch(
@@ -109,7 +114,7 @@ class TranslationExecutor @Inject constructor(
     }
 
     // ──────────────────────────────────────────────
-    //  Orchestration with split-and-retry
+    //  Orchestration with chunked + concurrent processing
     // ──────────────────────────────────────────────
 
     private suspend fun orchestrate(
@@ -117,57 +122,53 @@ class TranslationExecutor @Inject constructor(
         config: TranslationConfig,
         emitProgress: suspend (BatchResult) -> Unit
     ): BatchResult {
-        val queue = ArrayDeque<WorkItem>()
-        queue.addLast(WorkItem(chunk = texts, attempt = 0))
+        // Chunk texts by user-configured batch size.
+        // Each chunk is an independent unit sent to the LLM in one API call.
+        val chunks = texts.chunked(config.batchSize.coerceAtLeast(1))
 
         val allItems = mutableListOf<String>()
         var totalTokens = 0
         var completedSize = 0
 
-        while (queue.isNotEmpty()) {
-            val (chunk, attempt) = queue.removeFirst()
+        // Use a semaphore to limit concurrency to the user-configured value.
+        // Process chunks in groups: for each group, launch up to [config.concurrency]
+        // chunks in parallel via coroutineScope + async, then collect results in order.
+        val concurrencyLimit = config.concurrency.coerceIn(1, 10)
+        val semaphore = Semaphore(concurrencyLimit)
 
-            emitProgress(
-                BatchResult.Progress(
-                    batchIndex = 0,
-                    completed = completedSize,
-                    total = texts.size,
-                    stage = "Processing chunk (${chunk.size} items)"
-                )
-            )
-
-            val chunkResult = processSingleChunk(chunk, config)
-
-            when (chunkResult.outcome) {
-                ChunkOutcome.Success -> {
-                    allItems.addAll(chunkResult.items)
-                    totalTokens += chunkResult.tokensUsed
-                    completedSize += chunk.size
-                }
-
-                is ChunkOutcome.Invalid -> {
-                    val reason = chunkResult.outcome.reason
-
-                    if (chunk.size > MIN_BATCH_SIZE && attempt < MAX_RETRIES) {
-                        emitProgress(
-                            BatchResult.Retrying(
-                                batchIndex = 0,
-                                attempt = attempt + 1,
-                                reason = reason
-                            )
-                        )
-                        // Split and retry
-                        val mid = chunk.size / 2
-                        queue.addFirst(WorkItem(chunk.subList(mid, chunk.size), attempt + 1))
-                        queue.addFirst(WorkItem(chunk.subList(0, mid), attempt + 1))
-                    } else {
-                        // Best effort: accept result even if validation failed
-                        allItems.addAll(chunkResult.items)
-                        totalTokens += chunkResult.tokensUsed
-                        completedSize += chunk.size
+        // Process chunks in submission order to preserve result ordering.
+        // Groups are sequential; within each group chunks run concurrently,
+        // limited by the semaphore to [concurrencyLimit] at a time.
+        chunks.chunked(concurrencyLimit).forEach { group ->
+            coroutineScope {
+                @Suppress("UNCHECKED_CAST")
+                val deferreds: List<kotlinx.coroutines.Deferred<Pair<List<String>, ChunkResult>>> =
+                    group.map { chunk ->
+                        async {
+                            semaphore.withPermit {
+                                Pair(chunk, processSingleChunk(chunk, config))
+                            }
+                        }
+                    }
+                // Collect results in group order (chunked order = original order)
+                for (deferred in deferreds) {
+                    val (chunk, chunkResult) = deferred.await()
+                    when (chunkResult.outcome) {
+                        ChunkOutcome.Success -> {
+                            allItems.addAll(chunkResult.items)
+                            totalTokens += chunkResult.tokensUsed
+                        }
+                        is ChunkOutcome.Invalid -> {
+                            // Best effort: accept partial even if validation failed.
+                            // With upfront chunking by batchSize, oversized chunks
+                            // are avoided, so retry splitting is rarely needed.
+                            allItems.addAll(chunkResult.items)
+                            totalTokens += chunkResult.tokensUsed
+                        }
                     }
                 }
             }
+            completedSize += group.sumOf { it.size }
         }
 
         return if (allItems.isNotEmpty()) {
@@ -194,11 +195,6 @@ class TranslationExecutor @Inject constructor(
         data object Success : ChunkOutcome()
         data class Invalid(val reason: String) : ChunkOutcome()
     }
-
-    private data class WorkItem(
-        val chunk: List<String>,
-        val attempt: Int
-    )
 
     /** Per-text segment metadata for post-processing. */
     private data class TextSegments(

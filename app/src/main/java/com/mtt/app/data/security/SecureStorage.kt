@@ -141,5 +141,9 @@ class SecureStorage(
         // Base URL keys
         const val KEY_OPENAI_BASE_URL = "openai_base_url"
         const val KEY_ANTHROPIC_BASE_URL = "anthropic_base_url"
+
+        // Pipeline config keys
+        const val KEY_BATCH_SIZE = "batch_size"       // texts per API call
+        const val KEY_CONCURRENCY = "concurrency"     // parallel batches
     }
 }
