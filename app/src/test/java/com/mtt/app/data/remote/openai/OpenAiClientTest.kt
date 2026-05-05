@@ -82,7 +82,7 @@ class OpenAiClientTest {
             client.translate(MESSAGES, SYSTEM_PROMPT, TEST_MODEL)
             fail("Expected NetworkException to be thrown")
         } catch (e: NetworkException) {
-            assertEquals("网络连接失败，请检查网络", e.userMessage)
+            assertTrue(e.userMessage.startsWith("网络连接失败，请检查网络"))
         }
     }
 

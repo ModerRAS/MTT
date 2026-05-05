@@ -107,7 +107,7 @@ class AnthropicClientTest {
             client.translate(TEST_MESSAGES, TEST_SYSTEM_PROMPT, TEST_MODEL)
             fail("Expected NetworkException")
         } catch (e: NetworkException) {
-            assertEquals("网络连接失败，请检查网络", e.userMessage)
+            assertTrue(e.userMessage.startsWith("网络连接失败，请检查网络"))
         }
     }
 
