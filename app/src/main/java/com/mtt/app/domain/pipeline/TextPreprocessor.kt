@@ -261,18 +261,19 @@ object TextPreprocessor {
         var index = 1
 
         for (line in lines) {
-            if (line.isEmpty()) {
+            if (line.isEmpty() || line.trim().isEmpty()) {
                 segments.add(
                     Segment(index = index, text = "", isEmpty = true)
                 )
             } else {
-                val trimmed = line.trimStart()
                 val prefixLength = line.length - line.trimStart().length
                 val suffixLength = line.length - line.trimEnd().length
 
                 val prefix = if (prefixLength > 0) line.substring(0, prefixLength) else ""
                 val core = if (suffixLength > 0) {
-                    line.substring(prefixLength, line.length - suffixLength)
+                    // Guard: prefix + suffix may cover the whole line (whitespace-only edge case)
+                    val end = line.length - suffixLength
+                    if (end <= prefixLength) "" else line.substring(prefixLength, end)
                 } else {
                     line.substring(prefixLength)
                 }

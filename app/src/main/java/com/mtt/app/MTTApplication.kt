@@ -2,6 +2,7 @@ package com.mtt.app
 
 import android.app.Application
 import com.mtt.app.core.logger.AppLogger
+import com.mtt.app.data.io.StreamingJsonReader
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.ui.translation.TranslationViewModel
 import dagger.hilt.android.HiltAndroidApp
@@ -52,19 +53,29 @@ class MTTApplication : Application() {
             }
 
             // Read test JSON file if specified and auto-load for translation
+            // Uses StreamingJsonReader to avoid OOM on large files (5MB+).
             if (json.has("test_json_path")) {
                 val testPath = json.getString("test_json_path")
                 val testFile = File(testPath)
                 if (testFile.exists()) {
-                    val testContent = testFile.readText()
-                    val testJson = JSONObject(testContent)
                     val map = LinkedHashMap<String, String>()
-                    val names = testJson.names()
-                    if (names != null) {
-                        for (i in 0 until names.length()) {
-                            val key = names.getString(i)
-                            map[key] = testJson.optString(key, key)
+                    try {
+                        val inputStream = java.io.FileInputStream(testFile)
+                        try {
+                            val reader = com.mtt.app.data.io.StreamingJsonReader(inputStream)
+                            try {
+                                reader.readEntries { key: String, value: String ->
+                                    map.put(key, value)
+                                }
+                            } finally {
+                                reader.close()
+                            }
+                        } finally {
+                            inputStream.close()
                         }
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "Failed to read test JSON with streaming reader: ${e.message}")
+                        throw e
                     }
                     TranslationViewModel.pendingAutoLoad = TranslationViewModel.AutoLoadData(
                         sourceTexts = map.values.toList(),
