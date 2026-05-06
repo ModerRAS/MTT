@@ -30,6 +30,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -66,6 +68,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.mtt.app.data.model.ExtractedTerm
 import com.mtt.app.data.model.GlossaryEntryUiModel
 import com.mtt.app.domain.glossary.GlossaryEntry
@@ -84,10 +89,25 @@ fun GlossaryScreen(
     val glossaryUiEntries by viewModel.glossaryUiEntries.collectAsState()
     val pendingDeleteEntry by viewModel.pendingDeleteEntry.collectAsState()
     val isExtracting by viewModel.isExtracting.collectAsState()
+    val extractionProgress by viewModel.extractionProgress.collectAsState()
     val showExtractionReview by viewModel.showExtractionReview.collectAsState()
     val extractedTerms by viewModel.extractedTerms.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Refresh glossary data when this screen becomes visible (e.g. after extraction)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.loadGlossaryData()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     
     // Dialog states
     var showAddDialog by remember { mutableStateOf(false) }
@@ -195,6 +215,14 @@ fun GlossaryScreen(
                 }
                 Spacer(Modifier.width(8.dp))
                 Text("从原文提取术语 (AI)")
+            }
+
+            // Extraction Progress Section
+            if (isExtracting && !extractionProgress.isIndeterminate) {
+                ExtractionProgressSection(progress = extractionProgress)
+            } else if (isExtracting && extractionProgress.isIndeterminate) {
+                // Initial state before first chunk starts
+                ExtractionProgressSection(progress = extractionProgress)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -802,6 +830,49 @@ fun ExtractionReviewDialog(
             }
         }
     )
+}
+
+/**
+ * Extraction progress card showing a linear progress bar + current/total chunks.
+ */
+@Composable
+private fun ExtractionProgressSection(progress: ExtractionProgress) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "正在提取术语...",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { progress.percentage },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.secondaryContainer
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (progress.isIndeterminate) {
+                    "正在分析文本..."
+                } else {
+                    "正在处理 ${progress.completed}/${progress.total} 批 (${(progress.percentage * 100).toInt()}%)"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
+    }
 }
 
 /**

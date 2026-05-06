@@ -66,6 +66,10 @@ class GlossaryViewModel @Inject constructor(
     private val _isExtracting = MutableStateFlow(false)
     val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
 
+    /** Extraction progress: (completedChunks, totalChunks). Updated after each chunk. */
+    private val _extractionProgress = MutableStateFlow(ExtractionProgress(0, 0))
+    val extractionProgress: StateFlow<ExtractionProgress> = _extractionProgress.asStateFlow()
+
     // Current project ID - in a real app, this would come from a project manager
     private var currentProjectId: String = "default_project"
 
@@ -325,14 +329,18 @@ class GlossaryViewModel @Inject constructor(
     /**
      * Extract terms from source texts using AI.
      * Shows review dialog on success, error message on failure.
+     * Reports extraction progress via [_extractionProgress].
      */
     fun extractTerms() {
         viewModelScope.launch {
             _isExtracting.value = true
+            _extractionProgress.value = ExtractionProgress(0, 0)
             val texts = sourceTextRepository.sourceTexts.value
             val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
-            
-            when (val result = extractTermsUseCase.extractTerms(texts, srcLang)) {
+
+            when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
+                _extractionProgress.value = ExtractionProgress(completed, total)
+            }) {
                 is Result.Success -> {
                     _extractedTerms.value = result.data
                     _showExtractionReview.value = true
@@ -410,4 +418,17 @@ class GlossaryViewModel @Inject constructor(
             isCaseSensitive = matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE
         )
     }
+}
+
+/**
+ * Extraction progress state.
+ * @param completed Number of chunks processed so far
+ * @param total     Total number of chunks to process
+ */
+data class ExtractionProgress(
+    val completed: Int,
+    val total: Int
+) {
+    val percentage: Float get() = if (total > 0) completed.toFloat() / total else 0f
+    val isIndeterminate: Boolean get() = total == 0
 }
