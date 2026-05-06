@@ -50,7 +50,8 @@ class OpenAiClient(
     ): TranslationResponse {
         try {
             val jsonBody = buildJsonBody(messages, systemPrompt, model)
-            val url = baseUrl.trimEnd('/') + "/chat/completions"
+            val normalizedBaseUrl = normalizeApiUrl(baseUrl)
+            val url = "$normalizedBaseUrl/chat/completions"
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $apiKey")
@@ -171,7 +172,8 @@ class OpenAiClient(
      */
     fun testConnectionDirect(model: String): Boolean {
         val jsonBody = """{"model":"$model","messages":[{"role":"user","content":"hi"}],"max_tokens":5}"""
-        val url = baseUrl.trimEnd('/') + "/chat/completions"
+        val normalizedBaseUrl = normalizeApiUrl(baseUrl)
+        val url = "$normalizedBaseUrl/chat/completions"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $apiKey")
@@ -185,6 +187,27 @@ class OpenAiClient(
             throw ApiException(response.code, "HTTP ${response.code}: $body")
         }
         return true
+    }
+
+    /**
+     * Normalize the API base URL to ensure it includes the /v1 path segment
+     * required by OpenAI-compatible chat completion endpoints.
+     *
+     * Standard format: {base_url}/v1/chat/completions
+     * If the base URL doesn't include a version path (e.g., /v1, /v2),
+     * appends /v1 automatically.
+     *
+     * Examples:
+     *   "https://api.openai.com/v1"       → "https://api.openai.com/v1"
+     *   "https://api.deepseek.com"        → "https://api.deepseek.com/v1"
+     *   "https://api.deepseek.com/v1"     → "https://api.deepseek.com/v1"
+     *   "https://custom.example.com/v2"   → "https://custom.example.com/v2" (unchanged)
+     */
+    private fun normalizeApiUrl(baseUrl: String): String {
+        val url = baseUrl.trimEnd('/')
+        // Check if the URL already contains a version path segment (/v1, /v2, etc.)
+        val versionPathRegex = Regex("/v\\d+$")
+        return if (versionPathRegex.containsMatchIn(url)) url else "$url/v1"
     }
 
     companion object {
