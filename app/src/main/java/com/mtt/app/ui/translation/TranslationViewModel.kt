@@ -93,6 +93,9 @@ class TranslationViewModel @Inject constructor(
     private val _extractionProgress = MutableStateFlow(ExtractionProgress(0, 0))
     val extractionProgress: StateFlow<ExtractionProgress> = _extractionProgress.asStateFlow()
 
+    private val _extractionMessage = MutableStateFlow<String?>(null)
+    val extractionMessage: StateFlow<String?> = _extractionMessage.asStateFlow()
+
     init {
         loadCustomModelsFromStorage()
         loadModelFromSettings()
@@ -526,12 +529,11 @@ class TranslationViewModel @Inject constructor(
                         _extractedTerms.value = result.data
                         _showExtractionReview.value = true
                     } else {
-                        // No candidates found — keep current UI state, just log
-                        android.util.Log.i(TAG, "Glossary extraction: no candidate terms found")
+                        _extractionMessage.value = "未发现候选术语"
                     }
                 }
                 is com.mtt.app.core.error.Result.Failure -> {
-                    android.util.Log.w(TAG, "Glossary extraction failed: ${result.exception.message}")
+                    _extractionMessage.value = "术语提取失败: ${result.exception.message}"
                 }
             }
             _isExtracting.value = false
@@ -563,6 +565,11 @@ class TranslationViewModel @Inject constructor(
     fun cancelExtraction() {
         _showExtractionReview.value = false
         _extractedTerms.value = emptyList()
+    }
+
+    /** Clear the extraction result message. Called after snackbar dismisses. */
+    fun clearExtractionMessage() {
+        _extractionMessage.value = null
     }
 
     // ── Internal helpers ──────────────────────────

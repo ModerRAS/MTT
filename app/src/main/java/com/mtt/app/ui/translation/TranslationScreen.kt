@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +33,8 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -43,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,6 +95,16 @@ fun TranslationScreen(
     val showExtractionReview by viewModel.showExtractionReview.collectAsState()
     val isExtracting by viewModel.isExtracting.collectAsState()
     val extractionProgress by viewModel.extractionProgress.collectAsState()
+    val extractionMessage by viewModel.extractionMessage.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show extraction result messages as snackbar
+    LaunchedEffect(extractionMessage) {
+        extractionMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearExtractionMessage()
+        }
+    }
 
     // Reload settings when screen resumes (e.g., after returning from Settings)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -127,40 +141,47 @@ fun TranslationScreen(
         uri?.let { viewModel.onExportResult(it) }
     }
 
-    TranslationScreenContent(
-        uiState = uiState,
-        progress = progress,
-        currentMode = currentMode,
-        currentModel = currentModel,
-        prohibitionCount = prohibitionCount,
-        selectedFileName = selectedFileName,
-        isTranslating = isTranslating,
-        isPaused = isPaused,
-        isCompleted = isCompleted,
-        isExtracting = isExtracting,
-        extractionProgress = extractionProgress,
-        sourceLang = viewModel.sourceLang,
-        targetLang = viewModel.targetLang,
-        onSourceLangChange = viewModel::updateSourceLang,
-        onTargetLangChange = viewModel::updateTargetLang,
-        onFilePick = { filePickerLauncher.launch(arrayOf("application/json")) },
-        onModeChange = viewModel::onChangeMode,
-        onStartClick = viewModel::onStartTranslation,
-        onPauseClick = viewModel::onPauseTranslation,
-        onResumeClick = viewModel::onResumeTranslation,
-        onExportClick = { exportLauncher.launch("translated.txt") },
-        onExtractTermsClick = viewModel::extractTerms,
-        onNavigateToSettings = onNavigateToSettings
-    )
-
-    // Extraction review dialog
-    if (showExtractionReview) {
-        com.mtt.app.ui.glossary.ExtractionReviewDialog(
-            terms = extractedTerms,
-            existingTerms = emptyList(), // let dialog show all candidates
-            onDismiss = { viewModel.cancelExtraction() },
-            onConfirm = { selected -> viewModel.confirmExtraction(selected) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        TranslationScreenContent(
+            uiState = uiState,
+            progress = progress,
+            currentMode = currentMode,
+            currentModel = currentModel,
+            prohibitionCount = prohibitionCount,
+            selectedFileName = selectedFileName,
+            isTranslating = isTranslating,
+            isPaused = isPaused,
+            isCompleted = isCompleted,
+            isExtracting = isExtracting,
+            extractionProgress = extractionProgress,
+            sourceLang = viewModel.sourceLang,
+            targetLang = viewModel.targetLang,
+            onSourceLangChange = viewModel::updateSourceLang,
+            onTargetLangChange = viewModel::updateTargetLang,
+            onFilePick = { filePickerLauncher.launch(arrayOf("application/json")) },
+            onModeChange = viewModel::onChangeMode,
+            onStartClick = viewModel::onStartTranslation,
+            onPauseClick = viewModel::onPauseTranslation,
+            onResumeClick = viewModel::onResumeTranslation,
+            onExportClick = { exportLauncher.launch("translated.txt") },
+            onExtractTermsClick = viewModel::extractTerms,
+            onNavigateToSettings = onNavigateToSettings
         )
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+        )
+
+        // Extraction review dialog
+        if (showExtractionReview) {
+            com.mtt.app.ui.glossary.ExtractionReviewDialog(
+                terms = extractedTerms,
+                existingTerms = emptyList(), // let dialog show all candidates
+                onDismiss = { viewModel.cancelExtraction() },
+                onConfirm = { selected -> viewModel.confirmExtraction(selected) }
+            )
+        }
     }
 }
 
