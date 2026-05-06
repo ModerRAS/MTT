@@ -78,7 +78,7 @@ class MTTApplication : Application() {
                 AppLogger.i(TAG, "Auto-configured OpenAI model")
             }
 
-            // Read test JSON file if specified and auto-load for translation
+            // Read test JSON file if specified and pre-load for glossary extraction or manual translation
             // Uses StreamingJsonReader to avoid OOM on large files (5MB+).
             if (json.has("test_json_path")) {
                 val testPath = json.getString("test_json_path")

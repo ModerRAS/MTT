@@ -180,9 +180,9 @@ class TranslationViewModel @Inject constructor(
                 // Store source texts in repository for cross-ViewModel access
                 sourceTextRepository.setSourceTexts(pendingMap)
 
-                if (sourceTexts.isNotEmpty()) {
-                    onStartTranslation()
-                }
+                // Note: Auto-translation on load is intentionally disabled.
+                // The user should manually start translation via the UI.
+                // For glossary extraction, load a file then use the extraction button.
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Auto-start translation failed", e)
                 _uiState.value = TranslationUiState.Error("自动翻译启动失败: ${e.message}")
@@ -542,7 +542,7 @@ class TranslationViewModel @Inject constructor(
         }
         viewModelScope.launch {
             glossaryDao.insertAll(entities)
-            _uiState.value = TranslationUiState.Completed
+            // Keep Idle state after extraction — don't set Completed (that's for translation only)
         }
         _showExtractionReview.value = false
         _extractedTerms.value = emptyList()
