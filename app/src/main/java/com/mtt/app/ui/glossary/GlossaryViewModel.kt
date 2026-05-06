@@ -336,7 +336,7 @@ class GlossaryViewModel @Inject constructor(
             _isExtracting.value = true
             _extractionProgress.value = ExtractionProgress(0, 0)
             val texts = sourceTextRepository.sourceTexts.value
-            val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+            val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
 
             when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
                 _extractionProgress.value = ExtractionProgress(completed, total)

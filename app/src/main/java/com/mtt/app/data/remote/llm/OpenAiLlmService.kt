@@ -24,7 +24,9 @@ class OpenAiLlmService(
             openAiClient.translate(
                 messages = config.messages,
                 systemPrompt = config.systemPrompt,
-                model = config.model.modelId
+                model = config.model.modelId,
+                temperature = config.temperature,
+                maxTokens = config.maxTokens
             )
         }
     }

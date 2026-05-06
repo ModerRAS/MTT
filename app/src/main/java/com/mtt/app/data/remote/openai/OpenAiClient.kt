@@ -46,10 +46,12 @@ class OpenAiClient(
     fun translate(
         messages: List<LlmRequestConfig.Message>,
         systemPrompt: String,
-        model: String
+        model: String,
+        temperature: Float? = null,
+        maxTokens: Int? = null
     ): TranslationResponse {
         try {
-            val jsonBody = buildJsonBody(messages, systemPrompt, model)
+            val jsonBody = buildJsonBody(messages, systemPrompt, model, temperature, maxTokens)
             val normalizedBaseUrl = normalizeApiUrl(baseUrl)
             val url = "$normalizedBaseUrl/chat/completions"
             val request = Request.Builder()
@@ -103,10 +105,20 @@ class OpenAiClient(
     private fun buildJsonBody(
         messages: List<LlmRequestConfig.Message>,
         systemPrompt: String,
-        model: String
+        model: String,
+        temperature: Float? = null,
+        maxTokens: Int? = null
     ): String {
         val root = JSONObject()
         root.put("model", model)
+
+        // Optional parameters for deterministic output and cost control
+        if (temperature != null) {
+            root.put("temperature", temperature.toDouble())
+        }
+        if (maxTokens != null) {
+            root.put("max_tokens", maxTokens)
+        }
 
         val msgs = JSONArray()
         // System message first (matches AiNiee pattern)

@@ -270,11 +270,11 @@ class TranslationViewModel @Inject constructor(
     // Loaded from SecureStorage (configured in Settings screen)
 
     /** Current source language (e.g., "日语", "英语"). Read by TranslationScreen to initialize dropdown. */
-    var sourceLang: String = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "日语"
+    var sourceLang: String = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "日语"
         private set
 
     /** Current target language (e.g., "中文", "英语"). Read by TranslationScreen to initialize dropdown. */
-    var targetLang: String = secureStorage.getApiKey(SecureStorage.KEY_TARGET_LANG) ?: "中文"
+    var targetLang: String = secureStorage.getValue(SecureStorage.KEY_TARGET_LANG) ?: "中文"
         private set
     private var temperature: Float = 0.3f
     private var maxTokens: Int = 4096
@@ -519,7 +519,7 @@ class TranslationViewModel @Inject constructor(
             _isExtracting.value = true
             _extractionProgress.value = ExtractionProgress(0, 0)
             val texts = sourceTextRepository.sourceTexts.value
-            val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+            val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
 
             when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
                 _extractionProgress.value = ExtractionProgress(completed, total)
