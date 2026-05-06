@@ -100,10 +100,16 @@ class ExtractTermsUseCase @Inject constructor(
         }
 
         // ── Phase 1: Frequency analysis (CPU-bound, run on Default dispatcher) ──
-        val limitedCandidates = withContext(Dispatchers.Default) {
-            val textValues = sourceTexts.values
-            val candidates = FrequencyAnalyzer.extractCandidates(textValues)
-            FrequencyAnalyzer.limitCandidates(candidates)
+        val limitedCandidates = try {
+            withContext(Dispatchers.Default) {
+                val textValues = sourceTexts.values
+                val candidates = FrequencyAnalyzer.extractCandidates(textValues)
+                FrequencyAnalyzer.limitCandidates(candidates)
+            }
+        } catch (e: Exception) {
+            return Result.failure(
+                TranslationException("频率分析失败: ${e.message}")
+            )
         }
 
         if (limitedCandidates.isEmpty()) {
