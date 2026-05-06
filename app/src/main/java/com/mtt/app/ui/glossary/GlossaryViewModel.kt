@@ -342,8 +342,12 @@ class GlossaryViewModel @Inject constructor(
                 _extractionProgress.value = ExtractionProgress(completed, total)
             }) {
                 is Result.Success -> {
-                    _extractedTerms.value = result.data
-                    _showExtractionReview.value = true
+                    if (result.data.isNotEmpty()) {
+                        _extractedTerms.value = result.data
+                        _showExtractionReview.value = true
+                    } else {
+                        _uiState.update { it.copy(errorMessage = "未发现候选术语") }
+                    }
                 }
                 is Result.Failure -> {
                     _uiState.update { it.copy(errorMessage = "术语提取失败: ${result.exception.message}") }

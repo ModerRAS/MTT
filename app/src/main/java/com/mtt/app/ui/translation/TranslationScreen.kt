@@ -571,7 +571,7 @@ private fun TranslationScreenContent(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             if (extractionProgress.total > 0) {
-                                "提取中 ${extractionProgress.completed}/${extractionProgress.total}"
+                                "验证候选术语 ${extractionProgress.completed}/${extractionProgress.total}"
                             } else {
                                 "正在分析文本..."
                             }

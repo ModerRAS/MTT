@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -171,6 +173,7 @@ fun GlossaryScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
             // Glossary Import Section
             GlossaryImportSection(
@@ -216,7 +219,7 @@ fun GlossaryScreen(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     if (isExtracting && extractionProgress.total > 0) {
-                        "提取中 ${extractionProgress.completed}/${extractionProgress.total}"
+                        "验证候选术语 ${extractionProgress.completed}/${extractionProgress.total}"
                     } else if (isExtracting) {
                         "正在分析文本..."
                     } else {
@@ -871,8 +874,10 @@ fun ExtractionProgressSection(progress: ExtractionProgress) {
             Text(
                 text = if (progress.isIndeterminate) {
                     "正在分析文本..."
+                } else if (progress.completed < progress.total) {
+                    "正在验证候选术语 ${progress.completed}/${progress.total}"
                 } else {
-                    "正在处理 ${progress.completed}/${progress.total} 批 (${(progress.percentage * 100).toInt()}%)"
+                    "处理完成"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer

@@ -20,6 +20,8 @@ import com.mtt.app.data.remote.llm.LlmServiceFactory
 import com.mtt.app.data.remote.llm.ModelRegistry
 import com.mtt.app.data.remote.openai.OpenAiClient
 import com.mtt.app.data.security.SecureStorage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import javax.inject.Inject
@@ -97,10 +99,12 @@ class ExtractTermsUseCase @Inject constructor(
             return Result.success(emptyList())
         }
 
-        // ── Phase 1: Frequency analysis ──────────────
-        val textValues = sourceTexts.values
-        val candidates = FrequencyAnalyzer.extractCandidates(textValues)
-        val limitedCandidates = FrequencyAnalyzer.limitCandidates(candidates)
+        // ── Phase 1: Frequency analysis (CPU-bound, run on Default dispatcher) ──
+        val limitedCandidates = withContext(Dispatchers.Default) {
+            val textValues = sourceTexts.values
+            val candidates = FrequencyAnalyzer.extractCandidates(textValues)
+            FrequencyAnalyzer.limitCandidates(candidates)
+        }
 
         if (limitedCandidates.isEmpty()) {
             onProgress(1, 1)

@@ -522,13 +522,16 @@ class TranslationViewModel @Inject constructor(
                 _extractionProgress.value = ExtractionProgress(completed, total)
             }) {
                 is com.mtt.app.core.error.Result.Success -> {
-                    _extractedTerms.value = result.data
-                    _showExtractionReview.value = true
+                    if (result.data.isNotEmpty()) {
+                        _extractedTerms.value = result.data
+                        _showExtractionReview.value = true
+                    } else {
+                        // No candidates found — keep current UI state, just log
+                        android.util.Log.i(TAG, "Glossary extraction: no candidate terms found")
+                    }
                 }
                 is com.mtt.app.core.error.Result.Failure -> {
-                    _uiState.value = TranslationUiState.Error(
-                        "术语提取失败: ${result.exception.message}"
-                    )
+                    android.util.Log.w(TAG, "Glossary extraction failed: ${result.exception.message}")
                 }
             }
             _isExtracting.value = false
