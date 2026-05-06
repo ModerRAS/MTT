@@ -5,6 +5,8 @@ import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.error.ParseException
 import com.mtt.app.core.error.Result
 import com.mtt.app.core.error.TranslationException
+import com.mtt.app.data.llm.FrequencyAnalyzer
+import com.mtt.app.data.llm.FrequencyCandidate
 import com.mtt.app.data.llm.RateLimitException
 import com.mtt.app.data.llm.RateLimiter
 import com.mtt.app.data.llm.TokenEstimator
@@ -25,12 +27,15 @@ import javax.inject.Inject
 /**
  * AI-powered term extraction from source texts.
  *
- * Splits source texts into batches of [MAX_ITEMS_PER_CHUNK], sends each to the LLM
- * with a dedicated extraction prompt, parses the JSON response, and returns a
- * deduplicated list of [ExtractedTerm]s.
+ * Two-phase extraction:
+ * 1. **[Phase 1]** Frequency analysis — locally scan all source texts for recurring
+ *    character sequences to identify candidate glossary terms. This is fast and
+ *    requires zero API calls.
+ * 2. **[Phase 2]** LLM validation — send the candidates to the LLM for translation
+ *    and categorization. Much more efficient than scanning 42K entries chunk-by-chunk.
  *
  * Uses the existing [LlmServiceFactory] infrastructure and [RateLimiter] for
- * RPM/TPM management.  The extraction prompt is independent from [PromptBuilder].
+ * RPM/TPM management. The extraction prompt is independent from [PromptBuilder].
  *
  * @param secureStorage  For reading the active model configuration and API keys
  * @param okHttpClient   Base OkHttpClient (from DI) for constructing provider clients
@@ -43,15 +48,16 @@ class ExtractTermsUseCase @Inject constructor(
 ) {
 
     companion object {
-        /** Maximum number of source texts per LLM call. */
-        const val MAX_ITEMS_PER_CHUNK = 50
+        /** Maximum number of candidates per LLM validation call. */
+        const val MAX_CANDIDATES_PER_CALL = 300
 
-        /** System prompt for AI term extraction. */
-        private val EXTRACTION_SYSTEM_PROMPT = buildString {
-            append("你是一个术语提取专家。从以下翻译源文本中提取所有专有名词、人名、地名和技术术语。\n")
+        /** System prompt for AI term validation (Phase 2). */
+        private val VALIDATION_SYSTEM_PROMPT = buildString {
+            append("你是一个术语验证专家。以下是一批由频率分析发现的候选术语。\n")
+            append("请判断每个候选词是否是真正的专有名词、人名、地名或技术术语。\n")
             append("输出 JSON 数组：[{\"sourceTerm\": \"原文术语\", \"suggestedTarget\": \"建议译文\", \"category\": \"person/place/tech/other\"}]\n")
             append("规则：\n")
-            append("1. 只提取真正的专有名词/术语，不要提取普通词汇\n")
+            append("1. 只保留真正的专有名词/术语，丢弃普通词汇或无关内容\n")
             append("2. category 只能使用 person、place、tech、other 之一\n")
             append("3. suggestedTarget 提供建议的目标语言翻译，如果无法确定可留空字符串\n")
             append("4. 不要输出 JSON 数组之外的任何文字\n")
@@ -62,49 +68,66 @@ class ExtractTermsUseCase @Inject constructor(
             isLenient = true
             coerceInputValues = true
         }
+
+        private const val TARGET_TOKENS_PER_CALL = 4096
+        private const val LLM_TEMPERATURE = 0.1f
     }
 
     /**
      * Extract terminology from the given source texts.
      *
+     * Two-phase approach:
+     * - Phase 1: Local frequency analysis (fast, no API calls)
+     * - Phase 2: LLM validation of candidates (1-N calls depending on candidate count)
+     *
      * @param sourceTexts Map of text-id → text-content pairs
      * @param sourceLang  Source language (e.g., "日语", "英语")
+     * @param onProgress  Callback invoked after each phase with (completedSteps, totalSteps)
      * @return [Result.Success] with deduplicated terms, or [Result.Failure] on error
      */
     suspend fun extractTerms(
         sourceTexts: Map<String, String>,
-        sourceLang: String
+        sourceLang: String,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<List<ExtractedTerm>> {
         if (sourceTexts.isEmpty()) {
             return Result.success(emptyList())
         }
 
-        // 1. Load model from settings
-        val modelInfo = loadModelFromSettings()
+        // ── Phase 1: Frequency analysis ──────────────
+        onProgress(0, 2)
+        val textValues = sourceTexts.values
+        val candidates = FrequencyAnalyzer.extractCandidates(textValues)
+        val limitedCandidates = FrequencyAnalyzer.limitCandidates(candidates)
 
-        // 2. Create provider-specific LlmService
+        if (limitedCandidates.isEmpty()) {
+            onProgress(2, 2)
+            return Result.success(emptyList())
+        }
+
+        // ── Phase 2: LLM validation ──────────────────
+        onProgress(1, 2)
+
+        val modelInfo = loadModelFromSettings()
         val llmService = createLlmService(modelInfo.provider)
 
-        // 3. Chunk source texts into batches of MAX_ITEMS_PER_CHUNK
-        val entries = sourceTexts.entries.toList()
-        val chunks = entries.chunked(MAX_ITEMS_PER_CHUNK)
-
-        // 4. Process each chunk
+        // Chunk candidates for LLM (in case there are many)
+        val candidateChunks = limitedCandidates.chunked(MAX_CANDIDATES_PER_CALL)
         val allTerms = mutableListOf<ExtractedTerm>()
-        for ((chunkIndex, chunk) in chunks.withIndex()) {
-            val chunkResult = processChunk(
-                chunk = chunk,
+
+        for ((chunkIndex, chunk) in candidateChunks.withIndex()) {
+            val chunkResult = validateCandidateChunk(
+                candidates = chunk,
                 sourceLang = sourceLang,
                 modelInfo = modelInfo,
                 llmService = llmService,
                 chunkIndex = chunkIndex,
-                totalChunks = chunks.size
+                totalChunks = candidateChunks.size
             )
             when (chunkResult) {
                 is Result.Success -> allTerms.addAll(chunkResult.data)
                 is Result.Failure -> {
-                    // If we have partial results from previous chunks, return them
-                    // as best-effort instead of losing everything
+                    // Best-effort: return what we have so far
                     if (allTerms.isNotEmpty()) {
                         val unique = deduplicateAndFilter(allTerms)
                         return Result.success(unique)
@@ -114,17 +137,17 @@ class ExtractTermsUseCase @Inject constructor(
             }
         }
 
-        // 5. Deduplicate and filter empty
         val uniqueTerms = deduplicateAndFilter(allTerms)
+        onProgress(2, 2)
         return Result.success(uniqueTerms)
     }
 
     // ──────────────────────────────────────────────
-    //  Per-chunk processing
+    //  Candidate validation (Phase 2)
     // ──────────────────────────────────────────────
 
-    private suspend fun processChunk(
-        chunk: List<Map.Entry<String, String>>,
+    private suspend fun validateCandidateChunk(
+        candidates: List<FrequencyCandidate>,
         sourceLang: String,
         modelInfo: ModelInfo,
         llmService: LlmService,
@@ -132,24 +155,20 @@ class ExtractTermsUseCase @Inject constructor(
         totalChunks: Int
     ): Result<List<ExtractedTerm>> {
         try {
-            // Build user message with numbered texts
-            val userMessage = buildUserMessage(chunk, sourceLang, chunkIndex, totalChunks)
+            val userMessage = buildCandidateMessage(candidates, sourceLang, chunkIndex, totalChunks)
 
-            // Estimate tokens
             val estimatedTokens = TokenEstimator.estimate(userMessage) +
-                    TokenEstimator.estimate(EXTRACTION_SYSTEM_PROMPT) +
-                    100 // overhead
+                    TokenEstimator.estimate(VALIDATION_SYSTEM_PROMPT) +
+                    100
 
-            // Context window check
             if (!TokenEstimator.canFitInContext(estimatedTokens, modelInfo)) {
                 return Result.failure(
                     TranslationException(
-                        "Chunk ${chunkIndex + 1} too large: $estimatedTokens tokens exceed context window"
+                        "Candidate chunk ${chunkIndex + 1} too large: $estimatedTokens tokens exceed context window"
                     )
                 )
             }
 
-            // Rate limit
             try {
                 rateLimiter.acquire(estimatedTokens)
             } catch (e: RateLimitException) {
@@ -158,18 +177,16 @@ class ExtractTermsUseCase @Inject constructor(
                 )
             }
 
-            // LLM call
             val response = llmService.translate(
                 LlmRequestConfig(
                     messages = listOf(LlmRequestConfig.Message("user", userMessage)),
-                    systemPrompt = EXTRACTION_SYSTEM_PROMPT,
+                    systemPrompt = VALIDATION_SYSTEM_PROMPT,
                     model = modelInfo,
-                    temperature = 0.1f, // Low temperature for extraction consistency
-                    maxTokens = 4096
+                    temperature = LLM_TEMPERATURE,
+                    maxTokens = TARGET_TOKENS_PER_CALL
                 )
             )
 
-            // Parse JSON response
             return parseExtractionResponse(response.content)
         } catch (e: ApiException) {
             return Result.failure(e)
@@ -179,16 +196,16 @@ class ExtractTermsUseCase @Inject constructor(
             return Result.failure(e)
         } catch (e: Exception) {
             return Result.failure(
-                TranslationException("Term extraction failed: ${e.message}")
+                TranslationException("Term validation failed: ${e.message}")
             )
         }
     }
 
     /**
-     * Build the user message containing numbered source texts.
+     * Build the user message containing candidate terms for LLM validation.
      */
-    private fun buildUserMessage(
-        chunk: List<Map.Entry<String, String>>,
+    private fun buildCandidateMessage(
+        candidates: List<FrequencyCandidate>,
         sourceLang: String,
         chunkIndex: Int,
         totalChunks: Int
@@ -198,9 +215,9 @@ class ExtractTermsUseCase @Inject constructor(
         if (totalChunks > 1) {
             sb.append("批次：${chunkIndex + 1}/$totalChunks\n")
         }
-        sb.append("待提取文本：\n")
-        for ((i, entry) in chunk.withIndex()) {
-            sb.append("${i + 1}. ${entry.value}\n")
+        sb.append("以下是由词频分析发现的候选术语（数字表示出现次数）：\n\n")
+        for ((i, candidate) in candidates.withIndex()) {
+            sb.append("${i + 1}. ${candidate.term} (出现 ${candidate.frequency} 次)\n")
         }
         return sb.toString()
     }
