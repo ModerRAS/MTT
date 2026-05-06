@@ -166,9 +166,17 @@ class TranslationExecutor @Inject constructor(
                             totalTokens += chunkResult.tokensUsed
                         }
                     }
+                    completedSize += chunk.size
+                    emitProgress(
+                        BatchResult.Progress(
+                            batchIndex = 0,
+                            completed = completedSize,
+                            total = texts.size,
+                            stage = "Processing batch $completedSize/${texts.size}"
+                        )
+                    )
                 }
             }
-            completedSize += group.sumOf { it.size }
         }
 
         return if (allItems.isNotEmpty()) {

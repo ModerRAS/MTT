@@ -23,14 +23,40 @@ class MTTApplication : Application() {
      * If found, pre-populate SecureStorage with API keys/base URL/model and
      * optionally auto-load a test JSON file for translation.
      *
-     * This file is deleted after successful read to avoid re-configuration.
+     * Uses a dual-layer consumption marker so the config is processed at most
+     * once, even across process deaths:
+     *   Layer 1 — Internal marker file in [filesDir] (always reliable).
+     *   Layer 2 — Consumed-marker written to the config file itself (catches
+     *             stale config files left by emulators like MuMu where delete
+     *             silently no-ops).
      */
     private fun tryAutoConfigure() {
         val configFile = File("/data/local/tmp/mtt_debug_config.json")
+
+        // ── Layer 1: internal marker (always reliable) ──
+        val consumedMarker = File(filesDir, CONSUMED_MARKER_NAME)
+        if (consumedMarker.exists()) {
+            // Idempotent housekeeping on /data/local/tmp/ leftovers
+            if (configFile.exists()) configFile.delete()
+            return
+        }
+
+        // ── Bail early if config is missing ──
         if (!configFile.exists()) return
+        if (configFile.length() < 30) {
+            configFile.delete()
+            return
+        }
 
         try {
             val jsonString = configFile.readText()
+
+            // ── Layer 2: consumed-marker inside the config file ──
+            if (jsonString.startsWith("{\"consumed\"") || jsonString.startsWith("{\"already\"")) {
+                configFile.delete()
+                return
+            }
+
             val json = JSONObject(jsonString)
             val secureStorage = SecureStorage(this)
 
@@ -88,9 +114,24 @@ class MTTApplication : Application() {
                 }
             }
 
-            // Delete config file to avoid re-configuration on next launch
-            configFile.delete()
-            AppLogger.i(TAG, "Debug config applied and config file deleted")
+            // ── Mark config as consumed (both layers) ──
+            try {
+                // Internal marker file — survives anything, always reliable
+                consumedMarker.parentFile?.mkdirs()
+                consumedMarker.writeText("1")
+                AppLogger.i(TAG, "Internal consumed marker written")
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Failed to write internal consumed marker: ${e.message}")
+            }
+            try {
+                // Overwrite the external config file with a consumed marker
+                // (handles MuMu where delete silently no-ops)
+                configFile.writeText("{\"consumed\":true,\"ts\":${System.currentTimeMillis()}}")
+                AppLogger.i(TAG, "External config marked as consumed")
+            } catch (_: Exception) {
+                configFile.delete()
+                AppLogger.i(TAG, "External config deleted (write fallback)")
+            }
         } catch (e: Exception) {
             AppLogger.e(TAG, "Auto-configure failed: ${e.message}")
         }
@@ -98,5 +139,6 @@ class MTTApplication : Application() {
 
     companion object {
         private const val TAG = "MTTApplication"
+        private const val CONSUMED_MARKER_NAME = "mtt_debug_config_consumed"
     }
 }

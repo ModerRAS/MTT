@@ -41,3 +41,8 @@ tmp/
 
 # Reference project (AiNiee reference)
 AiNiee-ref/
+
+# Test / debug files — must never be committed
+emulator_state.png
+mtt_debug_config.json
+sample.json
