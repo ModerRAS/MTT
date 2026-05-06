@@ -20,11 +20,13 @@ class OpenAiLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun translate(config: LlmRequestConfig): TranslationResponse {
-        return openAiClient.translate(
-            messages = config.messages,
-            systemPrompt = config.systemPrompt,
-            model = config.model.modelId
-        )
+        return withContext(Dispatchers.IO) {
+            openAiClient.translate(
+                messages = config.messages,
+                systemPrompt = config.systemPrompt,
+                model = config.model.modelId
+            )
+        }
     }
 
     @Throws(ApiException::class, NetworkException::class)

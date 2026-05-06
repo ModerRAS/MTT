@@ -20,12 +20,14 @@ class AnthropicLlmService(
 
     @Throws(ApiException::class, NetworkException::class)
     override suspend fun translate(config: LlmRequestConfig): TranslationResponse {
-        return anthropicClient.translate(
-            messages = config.messages,
-            systemPrompt = config.systemPrompt,
-            model = config.model.modelId,
-            maxTokens = config.maxTokens
-        )
+        return withContext(Dispatchers.IO) {
+            anthropicClient.translate(
+                messages = config.messages,
+                systemPrompt = config.systemPrompt,
+                model = config.model.modelId,
+                maxTokens = config.maxTokens
+            )
+        }
     }
 
     @Throws(ApiException::class, NetworkException::class)
