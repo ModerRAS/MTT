@@ -31,6 +31,7 @@ data class GlossaryUiState(
     val prohibitionCount: Int = 0,
     val previewEntries: List<GlossaryEntry> = emptyList(),
     val isLoading: Boolean = false,
+    val hasSourceTexts: Boolean = false,
     val errorMessage: String? = null,
     val successMessage: String? = null
 )
@@ -70,6 +71,12 @@ class GlossaryViewModel @Inject constructor(
 
     init {
         loadGlossaryData()
+        // Observe source texts availability from the shared repository
+        viewModelScope.launch {
+            sourceTextRepository.sourceTexts.collect { texts ->
+                _uiState.update { it.copy(hasSourceTexts = texts.isNotEmpty()) }
+            }
+        }
     }
 
     /**

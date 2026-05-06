@@ -179,9 +179,10 @@ fun GlossaryScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // AI Extraction Button
+            // Requires source texts to be loaded (from Translation tab) + not currently extracting
             OutlinedButton(
                 onClick = { viewModel.extractTerms() },
-                enabled = uiState.previewEntries.isNotEmpty() && !isExtracting,
+                enabled = uiState.hasSourceTexts && !isExtracting,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 if (isExtracting) {
@@ -808,11 +809,10 @@ fun ExtractionReviewDialog(
  */
 private fun readUriContent(context: android.content.Context, uri: Uri): String? {
     return try {
-        val inputStream = context.contentResolver.openInputStream(uri)
-        val reader = BufferedReader(InputStreamReader(inputStream))
-        val content = reader.readText()
-        reader.close()
-        content
+        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+        BufferedReader(InputStreamReader(inputStream)).use { reader ->
+            reader.readText()
+        }
     } catch (e: Exception) {
         null
     }
