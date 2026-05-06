@@ -67,6 +67,8 @@ import com.mtt.app.data.model.ModelInfo
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.model.TranslationUiState
+import com.mtt.app.ui.glossary.ExtractionProgress
+import com.mtt.app.ui.glossary.ExtractionProgressSection
 import com.mtt.app.ui.theme.MttTheme
 import java.text.NumberFormat
 import java.util.Locale
@@ -88,6 +90,7 @@ fun TranslationScreen(
     val extractedTerms by viewModel.extractedTerms.collectAsState()
     val showExtractionReview by viewModel.showExtractionReview.collectAsState()
     val isExtracting by viewModel.isExtracting.collectAsState()
+    val extractionProgress by viewModel.extractionProgress.collectAsState()
 
     // Reload settings when screen resumes (e.g., after returning from Settings)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -135,6 +138,7 @@ fun TranslationScreen(
         isPaused = isPaused,
         isCompleted = isCompleted,
         isExtracting = isExtracting,
+        extractionProgress = extractionProgress,
         sourceLang = viewModel.sourceLang,
         targetLang = viewModel.targetLang,
         onSourceLangChange = viewModel::updateSourceLang,
@@ -173,6 +177,7 @@ private fun TranslationScreenContent(
     isPaused: Boolean,
     isCompleted: Boolean,
     isExtracting: Boolean = false,
+    extractionProgress: ExtractionProgress = ExtractionProgress(0, 0),
     sourceLang: String,
     targetLang: String,
     onSourceLangChange: (String) -> Unit,
@@ -564,11 +569,23 @@ private fun TranslationScreenContent(
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("提取中...")
+                        Text(
+                            if (extractionProgress.total > 0) {
+                                "提取中 ${extractionProgress.completed}/${extractionProgress.total}"
+                            } else {
+                                "正在分析文本..."
+                            }
+                        )
                     } else {
                         Text("从原文提取术语 (AI)")
                     }
                 }
+            }
+
+            // Extraction progress section
+            if (isExtracting && extractionProgress.total > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                ExtractionProgressSection(progress = extractionProgress)
             }
 
             // Error state

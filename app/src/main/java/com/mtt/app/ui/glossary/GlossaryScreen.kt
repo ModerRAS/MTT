@@ -214,14 +214,20 @@ fun GlossaryScreen(
                     Icon(Icons.Default.AutoAwesome, contentDescription = null)
                 }
                 Spacer(Modifier.width(8.dp))
-                Text("从原文提取术语 (AI)")
+                Text(
+                    if (isExtracting && extractionProgress.total > 0) {
+                        "提取中 ${extractionProgress.completed}/${extractionProgress.total}"
+                    } else if (isExtracting) {
+                        "正在分析文本..."
+                    } else {
+                        "从原文提取术语 (AI)"
+                    }
+                )
             }
 
-            // Extraction Progress Section
-            if (isExtracting && !extractionProgress.isIndeterminate) {
-                ExtractionProgressSection(progress = extractionProgress)
-            } else if (isExtracting && extractionProgress.isIndeterminate) {
-                // Initial state before first chunk starts
+            // Extraction Progress Section (visible when extracting)
+            if (isExtracting && extractionProgress.total > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
                 ExtractionProgressSection(progress = extractionProgress)
             }
 
@@ -836,7 +842,7 @@ fun ExtractionReviewDialog(
  * Extraction progress card showing a linear progress bar + current/total chunks.
  */
 @Composable
-private fun ExtractionProgressSection(progress: ExtractionProgress) {
+fun ExtractionProgressSection(progress: ExtractionProgress) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(

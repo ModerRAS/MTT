@@ -16,6 +16,7 @@ import com.mtt.app.data.model.TranslationUiState
 import com.mtt.app.data.remote.llm.ModelRegistry
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.pipeline.BatchResult
+import com.mtt.app.ui.glossary.ExtractionProgress
 import com.mtt.app.domain.usecase.TranslateTextsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -88,6 +89,9 @@ class TranslationViewModel @Inject constructor(
 
     private val _isExtracting = MutableStateFlow(false)
     val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
+
+    private val _extractionProgress = MutableStateFlow(ExtractionProgress(0, 0))
+    val extractionProgress: StateFlow<ExtractionProgress> = _extractionProgress.asStateFlow()
 
     init {
         loadCustomModelsFromStorage()
@@ -505,14 +509,18 @@ class TranslationViewModel @Inject constructor(
     /**
      * Extract terminology from loaded source texts using AI.
      * Shows review dialog on success, error message on failure.
+     * Reports progress via [_extractionProgress].
      */
     fun extractTerms() {
         viewModelScope.launch {
             _isExtracting.value = true
+            _extractionProgress.value = ExtractionProgress(0, 0)
             val texts = sourceTextRepository.sourceTexts.value
             val srcLang = secureStorage.getApiKey(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
 
-            when (val result = extractTermsUseCase.extractTerms(texts, srcLang)) {
+            when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
+                _extractionProgress.value = ExtractionProgress(completed, total)
+            }) {
                 is com.mtt.app.core.error.Result.Success -> {
                     _extractedTerms.value = result.data
                     _showExtractionReview.value = true

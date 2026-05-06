@@ -76,13 +76,16 @@ class ExtractTermsUseCase @Inject constructor(
     /**
      * Extract terminology from the given source texts.
      *
-     * Two-phase approach:
-     * - Phase 1: Local frequency analysis (fast, no API calls)
-     * - Phase 2: LLM validation of candidates (1-N calls depending on candidate count)
+     * Two-phase approach with per-chunk progress reporting:
+     * - Phase 1: Local frequency analysis (1 step, fast, no API calls)
+     * - Phase 2: LLM validation of candidates (N steps, one per batch)
+     *
+     * Progress: (completed, total) where total = 1 (Phase 1) + candidateChunks.size (Phase 2)
+     * Example with 2 candidate chunks: 0/3 → 1/3 → 2/3 → 3/3
      *
      * @param sourceTexts Map of text-id → text-content pairs
      * @param sourceLang  Source language (e.g., "日语", "英语")
-     * @param onProgress  Callback invoked after each phase with (completedSteps, totalSteps)
+     * @param onProgress  Callback invoked with (completedSteps, totalSteps)
      * @return [Result.Success] with deduplicated terms, or [Result.Failure] on error
      */
     suspend fun extractTerms(
@@ -95,24 +98,25 @@ class ExtractTermsUseCase @Inject constructor(
         }
 
         // ── Phase 1: Frequency analysis ──────────────
-        onProgress(0, 2)
         val textValues = sourceTexts.values
         val candidates = FrequencyAnalyzer.extractCandidates(textValues)
         val limitedCandidates = FrequencyAnalyzer.limitCandidates(candidates)
 
         if (limitedCandidates.isEmpty()) {
-            onProgress(2, 2)
+            onProgress(1, 1)
             return Result.success(emptyList())
         }
 
-        // ── Phase 2: LLM validation ──────────────────
-        onProgress(1, 2)
+        // Chunk candidates: total progress = 1 (freq analysis) + N (LLM chunks)
+        val candidateChunks = limitedCandidates.chunked(MAX_CANDIDATES_PER_CALL)
+        val totalProgressSteps = 1 + candidateChunks.size
 
+        onProgress(1, totalProgressSteps) // Phase 1 done
+
+        // ── Phase 2: LLM validation ──────────────────
         val modelInfo = loadModelFromSettings()
         val llmService = createLlmService(modelInfo.provider)
 
-        // Chunk candidates for LLM (in case there are many)
-        val candidateChunks = limitedCandidates.chunked(MAX_CANDIDATES_PER_CALL)
         val allTerms = mutableListOf<ExtractedTerm>()
 
         for ((chunkIndex, chunk) in candidateChunks.withIndex()) {
@@ -127,7 +131,6 @@ class ExtractTermsUseCase @Inject constructor(
             when (chunkResult) {
                 is Result.Success -> allTerms.addAll(chunkResult.data)
                 is Result.Failure -> {
-                    // Best-effort: return what we have so far
                     if (allTerms.isNotEmpty()) {
                         val unique = deduplicateAndFilter(allTerms)
                         return Result.success(unique)
@@ -135,10 +138,10 @@ class ExtractTermsUseCase @Inject constructor(
                     return chunkResult
                 }
             }
+            onProgress(1 + chunkIndex + 1, totalProgressSteps)
         }
 
         val uniqueTerms = deduplicateAndFilter(allTerms)
-        onProgress(2, 2)
         return Result.success(uniqueTerms)
     }
 
