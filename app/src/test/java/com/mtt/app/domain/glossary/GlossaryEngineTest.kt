@@ -31,8 +31,8 @@ class GlossaryEngineTest {
     @Test
     fun `match finds basic literal match`() {
         val glossary = listOf(
-            GlossaryEntry("HP", "生命值"),
-            GlossaryEntry("MP", "魔法值")
+            GlossaryEntry("HP", "Health"),
+            GlossaryEntry("MP", "Magic")
         )
         val result = GlossaryEngine.match("Your HP is full", glossary)
 
@@ -40,14 +40,14 @@ class GlossaryEngineTest {
         assertEquals("HP", result[0].matchedText)
         assertEquals(5, result[0].startIndex)
         assertEquals(7, result[0].endIndex)
-        assertEquals("生命值", result[0].entry.target)
+        assertEquals("Health", result[0].entry.target)
     }
 
     @Test
     fun `match finds multiple matches`() {
         val glossary = listOf(
-            GlossaryEntry("HP", "生命值"),
-            GlossaryEntry("MP", "魔法值")
+            GlossaryEntry("HP", "Health"),
+            GlossaryEntry("MP", "Magic")
         )
         val result = GlossaryEngine.match("HP and MP are important stats", glossary)
 
@@ -59,7 +59,7 @@ class GlossaryEngineTest {
     @Test
     fun `match handles case insensitive matching`() {
         val glossary = listOf(
-            GlossaryEntry("hp", "生命值", isCaseSensitive = false)
+            GlossaryEntry("hp", "Health", isCaseSensitive = false)
         )
         val result = GlossaryEngine.match("HP and hp and Hp", glossary)
 
@@ -132,17 +132,17 @@ class GlossaryEngineTest {
 
     @Test
     fun `protect replaces terms with placeholders`() {
-        val glossary = listOf(GlossaryEntry("HP", "生命值"))
+        val glossary = listOf(GlossaryEntry("HP", "Health"))
         val result = GlossaryEngine.protect("Your HP is full", glossary)
 
         assertEquals("Your {GLO_0} is full", result.protectedText)
         assertEquals(1, result.placeholders.size)
-        assertEquals("生命值", result.placeholders["{GLO_0}"])
+        assertEquals("Health", result.placeholders["{GLO_0}"])
     }
 
     @Test
     fun `protect returns original text when no matches`() {
-        val glossary = listOf(GlossaryEntry("HP", "生命值"))
+        val glossary = listOf(GlossaryEntry("HP", "Health"))
         val result = GlossaryEngine.protect("No matches here", glossary)
 
         assertEquals("No matches here", result.protectedText)
@@ -152,26 +152,26 @@ class GlossaryEngineTest {
     @Test
     fun `protect handles multiple terms`() {
         val glossary = listOf(
-            GlossaryEntry("HP", "生命值"),
-            GlossaryEntry("MP", "魔法值")
+            GlossaryEntry("HP", "Health"),
+            GlossaryEntry("MP", "Magic")
         )
         val result = GlossaryEngine.protect("HP and MP are stats", glossary)
 
         assertEquals("{GLO_0} and {GLO_1} are stats", result.protectedText)
-        assertEquals("生命值", result.placeholders["{GLO_0}"])
-        assertEquals("魔法值", result.placeholders["{GLO_1}"])
+        assertEquals("Health", result.placeholders["{GLO_0}"])
+        assertEquals("Magic", result.placeholders["{GLO_1}"])
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════
     //  restore() tests
-    // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════
 
     @Test
     fun `restore replaces placeholders with target terms`() {
-        val placeholders = mapOf("{GLO_0}" to "生命值")
+        val placeholders = mapOf("{GLO_0}" to "Health")
         val result = GlossaryEngine.restore("Your {GLO_0} is full", placeholders)
 
-        assertEquals("Your 生命值 is full", result)
+        assertEquals("Your Health is full", result)
     }
 
     @Test
@@ -183,12 +183,12 @@ class GlossaryEngineTest {
     @Test
     fun `restore handles multiple placeholders`() {
         val placeholders = mapOf(
-            "{GLO_0}" to "生命值",
-            "{GLO_1}" to "魔法值"
+            "{GLO_0}" to "Health",
+            "{GLO_1}" to "Magic"
         )
         val result = GlossaryEngine.restore("{GLO_0} and {GLO_1}", placeholders)
 
-        assertEquals("生命值 and 魔法值", result)
+        assertEquals("Health and Magic", result)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -198,15 +198,15 @@ class GlossaryEngineTest {
     @Test
     fun `buildGlossarySection builds correct format`() {
         val entries = listOf(
-            GlossaryEntry("HP", "生命值"),
-            GlossaryEntry("MP", "魔法值")
+            GlossaryEntry("HP", "Health"),
+            GlossaryEntry("MP", "Magic")
         )
         val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.TRANSLATE)
 
         assertTrue(result.contains("###术语表"))
         assertTrue(result.contains("原文|译文|备注"))
-        assertTrue(result.contains("HP|生命值|"))
-        assertTrue(result.contains("MP|魔法值|"))
+        assertTrue(result.contains("HP|Health|"))
+        assertTrue(result.contains("MP|Magic|"))
     }
 
     @Test
@@ -218,9 +218,56 @@ class GlossaryEngineTest {
     @Test
     fun `buildGlossarySection includes mode parameter but returns section regardless of mode`() {
         // Note: Current implementation ignores mode parameter
-        val entries = listOf(GlossaryEntry("HP", "生命值"))
+        val entries = listOf(GlossaryEntry("HP", "Health"))
         val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.PROOFREAD)
-        assertTrue(result.contains("HP|生命值|"))
+        assertTrue(result.contains("HP|Health|"))
+    }
+
+    @Test
+    fun `buildGlossarySection filters out pure number entries`() {
+        val entries = listOf(
+            GlossaryEntry("0", "Zero"),
+            GlossaryEntry("123", "OneTwoThree"),
+            GlossaryEntry("HP", "Health")
+        )
+        val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.TRANSLATE)
+        assertTrue("Should contain normal entry", result.contains("HP|Health|"))
+        assertFalse("Should NOT contain '0' entry", result.contains("0|Zero|"))
+        assertFalse("Should NOT contain '123' entry", result.contains("123|OneTwoThree|"))
+    }
+
+    @Test
+    fun `buildGlossarySection filters out EV code entries`() {
+        val entries = listOf(
+            GlossaryEntry("EV001", "EV001"),
+            GlossaryEntry("ev074", "ev074"),
+            GlossaryEntry("MP", "Magic")
+        )
+        val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.TRANSLATE)
+        assertTrue("Should contain normal entry", result.contains("MP|Magic|"))
+        assertFalse("Should NOT contain EV001", result.contains("EV001"))
+        assertFalse("Should NOT contain ev074", result.contains("ev074"))
+    }
+
+    @Test
+    fun `buildGlossarySection returns empty when all entries are skipped`() {
+        val entries = listOf(
+            GlossaryEntry("0", "Zero"),
+            GlossaryEntry("1", "One"),
+            GlossaryEntry("EV999", "EV999")
+        )
+        val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.TRANSLATE)
+        assertEquals("All entries are skip patterns, should be empty", "", result)
+    }
+
+    @Test
+    fun `buildGlossarySection keeps entries that start with number prefix`() {
+        // Entries that start with number prefix but aren't pure numbers should be kept
+        val entries = listOf(
+            GlossaryEntry("102. Difficulty", "DifficultySetting")
+        )
+        val result = GlossaryEngine.buildGlossarySection(entries, TranslationMode.TRANSLATE)
+        assertTrue("Entry with source number prefix should be kept", result.contains("102. Difficulty"))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -230,19 +277,52 @@ class GlossaryEngineTest {
     @Test
     fun `buildProhibitionSection builds correct format`() {
         val entries = listOf(
-            GlossaryEntry("Prohibited1", "do not translate"),
-            GlossaryEntry("Prohibited2", "keep as is")
+            GlossaryEntry("Term1", "do not translate"),
+            GlossaryEntry("Term2", "keep as is")
         )
         val result = GlossaryEngine.buildProhibitionSection(entries)
 
         assertTrue(result.contains("###DoNotTranslate"))
-        assertTrue(result.contains("Prohibited1|do not translate"))
-        assertTrue(result.contains("Prohibited2|keep as is"))
+        assertTrue(result.contains("Term1|do not translate"))
+        assertTrue(result.contains("Term2|keep as is"))
     }
 
     @Test
     fun `buildProhibitionSection returns empty for empty entries`() {
         val result = GlossaryEngine.buildProhibitionSection(emptyList())
         assertEquals("", result)
+    }
+
+    @Test
+    fun `buildProhibitionSection filters out pure number entries`() {
+        val entries = listOf(
+            GlossaryEntry("0", "keep"),
+            GlossaryEntry("999", "keep"),
+            GlossaryEntry("Term1", "do not translate")
+        )
+        val result = GlossaryEngine.buildProhibitionSection(entries)
+        assertTrue("Should contain normal entry", result.contains("Term1|do not translate"))
+        assertFalse("Should NOT contain '0' entry", result.contains("0|keep"))
+    }
+
+    @Test
+    fun `buildProhibitionSection filters out EV code entries`() {
+        val entries = listOf(
+            GlossaryEntry("EV001", "EV001"),
+            GlossaryEntry("Term1", "do not translate")
+        )
+        val result = GlossaryEngine.buildProhibitionSection(entries)
+        assertTrue("Should contain normal entry", result.contains("Term1"))
+        assertFalse("Should NOT contain EV001", result.contains("EV001"))
+    }
+
+    @Test
+    fun `buildProhibitionSection returns empty when all entries are skipped`() {
+        val entries = listOf(
+            GlossaryEntry("0", "zero"),
+            GlossaryEntry("EV074", "EV074")
+        )
+        val result = GlossaryEngine.buildProhibitionSection(entries)
+        assertEquals("All entries are skip patterns, should be empty", "", result)
     }
 }

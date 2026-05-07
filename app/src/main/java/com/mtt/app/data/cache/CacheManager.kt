@@ -73,7 +73,8 @@ class CacheManager(
         sourceText: String,
         translation: String,
         mode: TranslationMode,
-        modelId: String
+        modelId: String,
+        projectId: String = cacheProjectId
     ) {
         val dedupHash = sha256("$sourceText|${mode.name}|$modelId")
         val textIndex = hashToIntIndex(dedupHash)
@@ -81,7 +82,7 @@ class CacheManager(
         val now = Instant.now()
 
         val entity = CacheItemEntity(
-            projectId = cacheProjectId,
+            projectId = projectId,
             textIndex = textIndex,
             status = TranslationStatus.TRANSLATED,
             sourceText = sourceText,
@@ -173,6 +174,20 @@ class CacheManager(
         return allItems
             .filter { it.translatedText.isNotBlank() }
             .associate { it.sourceText to it.translatedText }
+    }
+
+    /**
+     * Count completed (TRANSLATED or POLISHED) cache entries for the given project.
+     */
+    suspend fun countCompleted(projectId: String = cacheProjectId): Int {
+        return cacheItemDao.getCompletedItems(projectId).size
+    }
+
+    /**
+     * Check if any cache entries exist for the given project.
+     */
+    suspend fun hasCachedItems(projectId: String = cacheProjectId): Boolean {
+        return cacheItemDao.countTotal(projectId) > 0
     }
 
     // ---- internal helpers ----

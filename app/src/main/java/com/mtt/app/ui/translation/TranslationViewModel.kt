@@ -628,7 +628,8 @@ class TranslationViewModel @Inject constructor(
      */
     private suspend fun loadResultsFromCache(config: TranslationConfig) {
         try {
-            val cacheMap = cacheManager.exportToJson()
+            val projectId = _selectedFileName.value ?: CacheManager.DEFAULT_PROJECT_ID
+            val cacheMap = cacheManager.exportToJson(projectId)
             translatedResults = sourceTexts.map { cacheMap[it] ?: it }
         } catch (_: Exception) {
             // If cache read fails, use source texts as fallback

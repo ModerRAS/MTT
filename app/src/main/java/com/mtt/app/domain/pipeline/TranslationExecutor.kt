@@ -4,6 +4,7 @@ import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.error.TranslationException
 import com.mtt.app.core.logger.AppLogger
+import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.llm.RateLimitException
 import com.mtt.app.data.llm.RateLimiter
 import com.mtt.app.data.llm.TokenEstimator
@@ -43,7 +44,8 @@ import javax.inject.Singleton
 @Singleton
 class TranslationExecutor @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val rateLimiter: RateLimiter
+    private val rateLimiter: RateLimiter,
+    private val cacheManager: CacheManager
 ) {
     companion object {
         private const val TAG = "TranslationExecutor"
@@ -99,7 +101,8 @@ class TranslationExecutor @Inject constructor(
      */
     fun executeBatch(
         texts: List<String>,
-        config: TranslationConfig
+        config: TranslationConfig,
+        projectId: String = CacheManager.DEFAULT_PROJECT_ID
     ): Flow<BatchResult> = flow {
         if (texts.isEmpty()) {
             emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0))
@@ -113,7 +116,7 @@ class TranslationExecutor @Inject constructor(
 
         val emitProgress: suspend (BatchResult) -> Unit = { emit(it) }
 
-        val result = orchestrate(texts, config, emitProgress)
+        val result = orchestrate(texts, config, projectId, emitProgress)
 
         emit(result)
     }
@@ -125,56 +128,146 @@ class TranslationExecutor @Inject constructor(
     private suspend fun orchestrate(
         texts: List<String>,
         config: TranslationConfig,
+        projectId: String,
         emitProgress: suspend (BatchResult) -> Unit
     ): BatchResult {
-        // Chunk texts by user-configured batch size.
-        // Each chunk is an independent unit sent to the LLM in one API call.
-        val chunks = texts.chunked(config.batchSize.coerceAtLeast(1))
+        val batchSize = config.batchSize.coerceAtLeast(1)
 
-        val allItems = mutableListOf<String>()
+        // ── Phase 1: Preprocess ALL texts globally ──
+        val allTextSegments = texts.mapIndexed { idx, text ->
+            val result = TextPreprocessor.preprocess(text)
+            TextSegments(idx, result.segments, result.metadata)
+        }
+
+        // Collect all non-empty segments with global numbering
+        val globalNonEmptyItems = mutableListOf<Pair<Int, String>>()  // (globalIndex, text)
+        for (ts in allTextSegments) {
+            for (seg in ts.segments) {
+                if (!seg.isEmpty) {
+                    globalNonEmptyItems.add((globalNonEmptyItems.size + 1) to seg.text)
+                }
+            }
+        }
+
+        // Identify skip items (pure numbers, EV codes, etc.)
+        val skipPositions = mutableSetOf<Int>()
+        val llmPositions = mutableListOf<Int>()  // positions in globalNonEmptyItems that need LLM
+        for ((pos, item) in globalNonEmptyItems.withIndex()) {
+            if (SkipPatterns.shouldSkip(item.second)) {
+                skipPositions.add(pos)
+                AppLogger.d(TAG, "Skip segment #${item.first}: \"${item.second}\"")
+            } else {
+                llmPositions.add(pos)
+            }
+        }
+
+        AppLogger.d(TAG, "Orchestrate: ${texts.size} texts → ${globalNonEmptyItems.size} segments → " +
+            "${llmPositions.size} LLM items (${skipPositions.size} skip)")
+
+        // Pre-fill result map with skip passthroughs
+        val globalResultMap = mutableMapOf<Int, String>()
+        for (pos in skipPositions) {
+            globalResultMap[pos] = globalNonEmptyItems[pos].second
+        }
+
+        // ── Phase 2: Build glossary section once (same for all chunks) ──
+        val glossaryEntries = config.glossaryEntries.map { entity ->
+            GlossaryEntry(
+                source = entity.sourceTerm,
+                target = entity.targetTerm,
+                isRegex = entity.matchType == GlossaryEntryEntity.MATCH_TYPE_REGEX,
+                isCaseSensitive = entity.matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE
+            )
+        }
+        val glossarySection = GlossaryEngine.buildGlossarySection(glossaryEntries, config.mode)
+        val prohibitionSection = if (config.mode == TranslationMode.TRANSLATE) {
+            GlossaryEngine.buildProhibitionSection(glossaryEntries)
+        } else ""
+
+        // ── Phase 3: Chunk LLM items by batchSize (after filtering!) ──
+        val llmChunks: List<List<Int>> = llmPositions.chunked(batchSize)
+
+        // Emit initial progress: skip items are immediately "done"
+        var completedCount = skipPositions.size
+        emitProgress(
+            BatchResult.Progress(
+                batchIndex = 0,
+                completed = completedCount,
+                total = texts.size,
+                stage = "过滤 ${skipPositions.size} 条跳过项"
+            )
+        )
+
         var totalTokens = 0
-        var completedSize = 0
 
-        // Use a semaphore to limit concurrency to the user-configured value.
-        // Process chunks in groups: for each group, launch up to [config.concurrency]
-        // chunks in parallel via coroutineScope + async, then collect results in order.
+        // Concurrency: process chunks in groups, each group in parallel
         val concurrencyLimit = config.concurrency.coerceIn(1, 10)
         val semaphore = Semaphore(concurrencyLimit)
 
-        // Process chunks in submission order to preserve result ordering.
-        // Groups are sequential; within each group chunks run concurrently,
-        // limited by the semaphore to [concurrencyLimit] at a time.
-        chunks.chunked(concurrencyLimit).forEach { group ->
+        llmChunks.chunked(concurrencyLimit).forEach { group ->
             coroutineScope {
-                @Suppress("UNCHECKED_CAST")
-                val deferreds: List<kotlinx.coroutines.Deferred<Pair<List<String>, ChunkResult>>> =
-                    group.map { chunk ->
-                        async {
-                            semaphore.withPermit {
-                                Pair(chunk, processSingleChunk(chunk, config))
+                val deferreds = group.map { chunkPositions ->
+                    async {
+                        semaphore.withPermit {
+                            val chunkItems = chunkPositions.map { pos ->
+                                globalNonEmptyItems[pos]
                             }
+                            val chunkResult = executeLlmAgentLoop(
+                                chunkItems, config, glossarySection, prohibitionSection
+                            )
+                            // Map local positions back to global positions
+                            val globalTranslations = mutableMapOf<Int, String>()
+                            for ((localPos, translation) in chunkResult.translations) {
+                                globalTranslations[chunkPositions[localPos]] = translation
+                            }
+                            Pair(chunkPositions, LlmChunkResult(
+                                translations = globalTranslations,
+                                tokensUsed = chunkResult.tokensUsed
+                            ))
                         }
                     }
-                // Collect results in group order (chunked order = original order)
+                }
                 for (deferred in deferreds) {
-                    val (chunk, chunkResult) = deferred.await()
-                    allItems.addAll(chunkResult.items)
+                    val (chunkPositions, chunkResult) = deferred.await()
+                    globalResultMap.putAll(chunkResult.translations)
                     totalTokens += chunkResult.tokensUsed
-                    completedSize += chunk.size
+                    completedCount += chunkPositions.size
                     emitProgress(
                         BatchResult.Progress(
                             batchIndex = 0,
-                            completed = completedSize,
+                            completed = completedCount,
                             total = texts.size,
-                            stage = "Processing batch $completedSize/${texts.size}"
+                            stage = "翻译中 $completedCount/${texts.size}"
                         )
                     )
                 }
             }
         }
 
-        return if (allItems.isNotEmpty()) {
-            BatchResult.Success(batchIndex = 0, items = allItems, tokensUsed = totalTokens)
+        // ── Phase 4: Rebuild texts from all segments ──
+        val mergedSegments = globalNonEmptyItems.indices.map {
+            globalResultMap[it] ?: globalNonEmptyItems[it].second
+        }
+        val translatedItems = rebuildTexts(allTextSegments, mergedSegments)
+
+        // ── Phase 5: Save all results to cache ──
+        try {
+            texts.zip(translatedItems).forEach { (source, translated) ->
+                cacheManager.saveToCache(
+                    sourceText = source,
+                    translation = translated,
+                    mode = config.mode,
+                    modelId = config.model.modelId,
+                    projectId = projectId
+                )
+            }
+            AppLogger.d(TAG, "Saved ${translatedItems.size} items to cache for project [$projectId]")
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Cache save failed (non-fatal)", e)
+        }
+
+        return if (translatedItems.isNotEmpty()) {
+            BatchResult.Success(batchIndex = 0, items = translatedItems, tokensUsed = totalTokens)
         } else {
             BatchResult.Failure(
                 batchIndex = 0,
@@ -184,246 +277,8 @@ class TranslationExecutor @Inject constructor(
     }
 
     // ──────────────────────────────────────────────
-    //  Internal types
+    //  Text fallback (no tool call output)
     // ──────────────────────────────────────────────
-
-    private data class ChunkResult(
-        val items: List<String>,
-        val tokensUsed: Int,
-        val outcome: ChunkOutcome
-    )
-
-    private sealed class ChunkOutcome {
-        data object Success : ChunkOutcome()
-        data class Invalid(val reason: String) : ChunkOutcome()
-    }
-
-    /** Per-text segment metadata for post-processing. */
-    private data class TextSegments(
-        val originalIndex: Int,
-        val segments: List<Segment>,
-        val metadata: PreprocessingMetadata
-    )
-
-    // ──────────────────────────────────────────────
-    //  Single chunk pipeline
-    // ──────────────────────────────────────────────
-
-    private suspend fun processSingleChunk(
-        chunk: List<String>,
-        config: TranslationConfig
-    ): ChunkResult {
-        // 1. Preprocess each text into segments
-        val textSegmentsList = chunk.mapIndexed { idx, text ->
-            val result = TextPreprocessor.preprocess(text)
-            TextSegments(idx, result.segments, result.metadata)
-        }
-
-        // Collect non-empty segments with global numbering
-        val nonEmptyItems = mutableListOf<Pair<Int, String>>()
-        var globalIndex = 0
-
-        for (ts in textSegmentsList) {
-            for (seg in ts.segments) {
-                if (!seg.isEmpty) {
-                    globalIndex++
-                    nonEmptyItems.add(globalIndex to seg.text)
-                }
-            }
-        }
-
-        if (nonEmptyItems.isEmpty()) {
-            return ChunkResult(
-                items = emptyList(),
-                tokensUsed = 0,
-                outcome = ChunkOutcome.Success
-            )
-        }
-
-        // 1b. Filter out items that need no translation — pure numbers, EV codes, etc.
-        val numericPositions = mutableSetOf<Int>()
-        val llmNonEmptyItems = mutableListOf<Pair<Int, String>>()
-        for ((pos, item) in nonEmptyItems.withIndex()) {
-            if (SkipPatterns.shouldSkip(item.second)) {
-                numericPositions.add(pos)
-                AppLogger.d(TAG, "Passthrough segment #${item.first}: \"${item.second}\"")
-            } else {
-                llmNonEmptyItems.add(item)
-            }
-        }
-
-        if (llmNonEmptyItems.isEmpty()) {
-            AppLogger.d(TAG, "All ${chunk.size} items in chunk are passthrough, skip LLM call")
-            return ChunkResult(items = chunk, tokensUsed = 0, outcome = ChunkOutcome.Success)
-        }
-
-        // 2. Convert GlossaryEntryEntity -> GlossaryEntry
-        val glossaryEntries = config.glossaryEntries.map { entity ->
-            GlossaryEntry(
-                source = entity.sourceTerm,
-                target = entity.targetTerm,
-                isRegex = entity.matchType == GlossaryEntryEntity.MATCH_TYPE_REGEX,
-                isCaseSensitive = entity.matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE
-            )
-        }
-
-        val glossarySection = GlossaryEngine.buildGlossarySection(glossaryEntries, config.mode)
-        val prohibitionSection = if (config.mode == TranslationMode.TRANSLATE) {
-            GlossaryEngine.buildProhibitionSection(glossaryEntries)
-        } else ""
-
-        // 3. Build prompt (exclude numeric items — they get passthrough)
-        val prompt = buildPrompt(
-            llmNonEmptyItems, config, glossarySection, prohibitionSection, ""
-        )
-
-        // 4a. Token estimation
-        val segmentTexts = llmNonEmptyItems.map { it.second }
-        val estimatedTokens = TokenEstimator.estimateBatch(
-            segmentTexts, prompt.systemPrompt, "\n1. "
-        )
-
-        // 4b. Context window check
-        if (!TokenEstimator.canFitInContext(estimatedTokens, config.model)) {
-            return ChunkResult(
-                items = chunk,  // passthrough original on failure
-                tokensUsed = 0,
-                outcome = ChunkOutcome.Success
-            )
-        }
-
-        // 5. Rate limit
-        try {
-            rateLimiter.acquire(estimatedTokens)
-        } catch (e: RateLimitException) {
-            return ChunkResult(
-                items = chunk,  // passthrough original on failure
-                tokensUsed = 0,
-                outcome = ChunkOutcome.Success
-            )
-        }
-
-        // ── Tool calling + agent loop ──────────────────────────
-        // Uses LLM tool calling (output_translations: {source, translated} pairs)
-        // instead of raw text parsing. If some items are not covered, loops back
-        // with remaining items (agent loop).
-
-        // Map: nonEmptyItems position → translation text
-        val resultMap = mutableMapOf<Int, String>()
-        // Fill numeric passthroughs
-        for (pos in numericPositions) {
-            resultMap[pos] = nonEmptyItems[pos].second
-        }
-
-        // Remaining non-numeric positions in nonEmptyItems
-        val remainingPositions = mutableListOf<Int>()
-        for (pos in nonEmptyItems.indices) {
-            if (pos !in numericPositions) remainingPositions.add(pos)
-        }
-
-        var totalTokens = 0
-        var iteration = 0
-        val MAX_ITERATIONS = 5
-
-        while (remainingPositions.isNotEmpty() && iteration < MAX_ITERATIONS) {
-            iteration++
-
-            // Build prompt for remaining items
-            val remainingItems = remainingPositions.map { pos ->
-                nonEmptyItems[pos].first to nonEmptyItems[pos].second
-            }
-            val retryPrompt = buildPrompt(
-                remainingItems, config, glossarySection, prohibitionSection, ""
-            )
-
-            // Call LLM with tool choice
-            val response = try {
-                val llmConfig = LlmRequestConfig(
-                    messages = listOf(LlmRequestConfig.Message("user", retryPrompt.userMessage)),
-                    systemPrompt = retryPrompt.systemPrompt,
-                    model = config.model,
-                    temperature = config.temperature,
-                    maxTokens = config.maxTokens,
-                    toolChoice = "output_translations"
-                )
-                currentLlmService!!.translate(llmConfig)
-            } catch (e: ApiException) {
-                AppLogger.w(TAG, "API error iteration $iteration (passthrough ${remainingPositions.size} items): ${e.message}")
-                for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
-                remainingPositions.clear()
-                break
-            } catch (e: NetworkException) {
-                AppLogger.w(TAG, "Network error iteration $iteration (passthrough ${remainingPositions.size} items): ${e.message}")
-                for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
-                remainingPositions.clear()
-                break
-            }
-            totalTokens += response.tokensUsed
-            AppLogger.i(TAG, "LLM response iteration $iteration: ${response.content.length} chars, ${response.tokensUsed} tokens, model=${response.model}")
-
-            // Tool call result: {source, translated} pairs
-            // Tool call already pairs each translation to its source — use positionally.
-            // Model returns results in the same order as input items.
-            // Strip any numbering prefix ("N. " or "N、") from translated text,
-            // since the prompt includes numbering that the model may echo back.
-            if (response.translationPairs != null) {
-                val numPrefix = Regex("""^\d+[.\、]\s*""")
-                val count = minOf(response.translationPairs.size, remainingPositions.size)
-                val toKeep = remainingPositions.drop(count)
-                for (i in 0 until count) {
-                    val translated = numPrefix.replaceFirst(response.translationPairs[i].translated, "")
-                    resultMap[remainingPositions[i]] = translated
-                }
-                remainingPositions.clear()
-                remainingPositions.addAll(toKeep)
-                AppLogger.d(TAG, "Tool call iteration $iteration: +$count matched, ${remainingPositions.size} remaining")
-
-                if (count == 0) {
-                    AppLogger.w(TAG, "Tool call made no progress, passthrough ${remainingPositions.size} items")
-                    for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
-                    remainingPositions.clear()
-                }
-            }
-            // Fallback: flat translations array — match by position order
-            else if (response.translations != null && response.translations.isNotEmpty()) {
-                val count = minOf(response.translations.size, remainingPositions.size)
-                for (i in 0 until count) {
-                    resultMap[remainingPositions[i]] = response.translations[i]
-                }
-                if (count < remainingPositions.size) {
-                    // Partial flat result — passthrough the rest
-                    for (i in count until remainingPositions.size) {
-                        resultMap[remainingPositions[i]] = nonEmptyItems[remainingPositions[i]].second
-                    }
-                }
-                remainingPositions.clear()
-                AppLogger.d(TAG, "Flat translation: $count items")
-            }
-            // No structured output — fall through to old flow
-            else {
-                AppLogger.w(TAG, "No tool call result, falling back to text parsing")
-                processSingleChunkTextFallback(response, resultMap, remainingPositions, nonEmptyItems, config)
-                remainingPositions.clear()
-            }
-        }
-
-        // Build merged segments in order
-        val mergedSegments = nonEmptyItems.indices.map {
-            resultMap[it] ?: nonEmptyItems[it].second
-        }
-        AppLogger.i(TAG, "Agent loop done: ${nonEmptyItems.size} segments, " +
-            "${numericPositions.size} numeric passthrough, $totalTokens tokens over $iteration iteration(s), " +
-            "${if (remainingPositions.isEmpty()) "all covered" else "${remainingPositions.size} passthrough"}")
-
-        // 10. Rejoin per original text using postprocess
-        val translatedItems = rebuildTexts(textSegmentsList, mergedSegments)
-
-        return ChunkResult(
-            items = translatedItems,
-            tokensUsed = totalTokens,
-            outcome = ChunkOutcome.Success
-        )
-    }
 
     /**
      * Fallback: validates raw text response, extracts translations via
@@ -432,11 +287,11 @@ class TranslationExecutor @Inject constructor(
      * Used when the LLM does not return a tool call (e.g., model doesn't
      * support tool calling, or the response format is unexpected).
      */
-    private fun processSingleChunkTextFallback(
+    private fun executeTextFallback(
         response: TranslationResponse,
         resultMap: MutableMap<Int, String>,
-        remainingPositions: MutableList<Int>,
-        nonEmptyItems: List<Pair<Int, String>>,
+        remainingPositions: List<Int>,
+        items: List<Pair<Int, String>>,
         config: TranslationConfig
     ) {
         // Validate raw response
@@ -456,7 +311,7 @@ class TranslationExecutor @Inject constructor(
 
         if (validation != ValidationResult.Valid) {
             for (pos in remainingPositions) {
-                resultMap[pos] = nonEmptyItems[pos].second
+                resultMap[pos] = items[pos].second
             }
             return
         }
@@ -471,7 +326,7 @@ class TranslationExecutor @Inject constructor(
             is ExtractionResult.Error -> {
                 AppLogger.w(TAG, "Extraction failed (passthrough): ${extractionResult.message}")
                 for (pos in remainingPositions) {
-                    resultMap[pos] = nonEmptyItems[pos].second
+                    resultMap[pos] = items[pos].second
                 }
                 return
             }
@@ -484,9 +339,170 @@ class TranslationExecutor @Inject constructor(
         }
         // Passthrough any surplus
         for (i in count until remainingPositions.size) {
-            resultMap[remainingPositions[i]] = nonEmptyItems[remainingPositions[i]].second
+            resultMap[remainingPositions[i]] = items[remainingPositions[i]].second
         }
     }
+
+    // ──────────────────────────────────────────────
+    //  Internal types
+    // ──────────────────────────────────────────────
+
+    /** Per-text segment metadata for post-processing. */
+    private data class TextSegments(
+        val originalIndex: Int,
+        val segments: List<Segment>,
+        val metadata: PreprocessingMetadata
+    )
+
+    /** Result of running the LLM agent loop on a single chunk of pre-filtered items. */
+    private data class LlmChunkResult(
+        val translations: Map<Int, String>,  // local position → translation
+        val tokensUsed: Int
+    )
+
+    // ──────────────────────────────────────────────
+    //  LLM agent loop (operates on pre-filtered items)
+    // ──────────────────────────────────────────────
+
+    /**
+     * Runs the tool-calling agent loop on a chunk of pre-filtered items.
+     * Items are guaranteed to be non-empty and not matching SkipPatterns.
+     *
+     * @param items  (globalIndex, text) pairs — all LLM-bound, no passthrough
+     * @return [LlmChunkResult] with position → translation map + token usage
+     */
+    private suspend fun executeLlmAgentLoop(
+        items: List<Pair<Int, String>>,
+        config: TranslationConfig,
+        glossarySection: String,
+        prohibitionSection: String
+    ): LlmChunkResult {
+        if (items.isEmpty()) {
+            return LlmChunkResult(translations = emptyMap(), tokensUsed = 0)
+        }
+
+        // Token estimation
+        val segmentTexts = items.map { it.second }
+        val initPrompt = buildPrompt(items, config, glossarySection, prohibitionSection, "")
+        val estimatedTokens = TokenEstimator.estimateBatch(
+            segmentTexts, initPrompt.systemPrompt, "\n1. "
+        )
+
+        // Context window check
+        if (!TokenEstimator.canFitInContext(estimatedTokens, config.model)) {
+            AppLogger.w(TAG, "Chunk of ${items.size} items exceeds context window, passthrough all")
+            return LlmChunkResult(
+                translations = items.indices.associate { it to items[it].second },
+                tokensUsed = 0
+            )
+        }
+
+        // Rate limit
+        try {
+            rateLimiter.acquire(estimatedTokens)
+        } catch (e: RateLimitException) {
+            AppLogger.w(TAG, "Rate limited, passthrough ${items.size} items")
+            return LlmChunkResult(
+                translations = items.indices.associate { it to items[it].second },
+                tokensUsed = 0
+            )
+        }
+
+        val localResultMap = mutableMapOf<Int, String>()  // local position → translation
+        val remainingLocalPositions = items.indices.toMutableList()
+        var totalTokens = 0
+        var iteration = 0
+        val MAX_ITERATIONS = 5
+
+        while (remainingLocalPositions.isNotEmpty() && iteration < MAX_ITERATIONS) {
+            iteration++
+
+            val remainingItems = remainingLocalPositions.map { items[it] }
+            val retryPrompt = buildPrompt(remainingItems, config, glossarySection, prohibitionSection, "")
+
+            val response = try {
+                val llmConfig = LlmRequestConfig(
+                    messages = listOf(LlmRequestConfig.Message("user", retryPrompt.userMessage)),
+                    systemPrompt = retryPrompt.systemPrompt,
+                    model = config.model,
+                    temperature = config.temperature,
+                    maxTokens = config.maxTokens,
+                    toolChoice = "output_translations"
+                )
+                currentLlmService!!.translate(llmConfig)
+            } catch (e: ApiException) {
+                AppLogger.w(TAG, "API error iteration $iteration (passthrough ${remainingLocalPositions.size} items): ${e.message}")
+                for (pos in remainingLocalPositions) localResultMap[pos] = items[pos].second
+                remainingLocalPositions.clear()
+                break
+            } catch (e: NetworkException) {
+                AppLogger.w(TAG, "Network error iteration $iteration (passthrough ${remainingLocalPositions.size} items): ${e.message}")
+                for (pos in remainingLocalPositions) localResultMap[pos] = items[pos].second
+                remainingLocalPositions.clear()
+                break
+            }
+            totalTokens += response.tokensUsed
+            AppLogger.i(TAG, "LLM response iteration $iteration: ${response.content.length} chars, ${response.tokensUsed} tokens, model=${response.model}")
+
+            // Tool call result: {source, translated} — positional match
+            if (response.translationPairs != null) {
+                val numPrefix = Regex("""^\d+[.\、]\s*""")
+                val count = minOf(response.translationPairs.size, remainingLocalPositions.size)
+                for (i in 0 until count) {
+                    val rawTranslated = response.translationPairs[i].translated
+                    val originalText = items[remainingLocalPositions[i]].second
+                    val translated = if (numPrefix.containsMatchIn(originalText)) {
+                        rawTranslated
+                    } else {
+                        numPrefix.replaceFirst(rawTranslated, "")
+                    }
+                    localResultMap[remainingLocalPositions[i]] = translated
+                }
+                val toKeep = remainingLocalPositions.drop(count)
+                remainingLocalPositions.clear()
+                remainingLocalPositions.addAll(toKeep)
+                AppLogger.d(TAG, "Tool call iteration $iteration: +$count matched, ${remainingLocalPositions.size} remaining")
+
+                if (count == 0) {
+                    AppLogger.w(TAG, "Tool call made no progress, passthrough ${remainingLocalPositions.size} items")
+                    for (pos in remainingLocalPositions) localResultMap[pos] = items[pos].second
+                    remainingLocalPositions.clear()
+                }
+            }
+            // Fallback: flat translations array
+            else if (response.translations != null && response.translations.isNotEmpty()) {
+                val count = minOf(response.translations.size, remainingLocalPositions.size)
+                for (i in 0 until count) {
+                    localResultMap[remainingLocalPositions[i]] = response.translations[i]
+                }
+                for (i in count until remainingLocalPositions.size) {
+                    localResultMap[remainingLocalPositions[i]] = items[remainingLocalPositions[i]].second
+                }
+                remainingLocalPositions.clear()
+                AppLogger.d(TAG, "Flat translation: $count items")
+            }
+            // Text fallback (no tool call output)
+            else {
+                AppLogger.w(TAG, "No tool call result, falling back to text parsing")
+                executeTextFallback(
+                    response, localResultMap, remainingLocalPositions, items, config
+                )
+                remainingLocalPositions.clear()
+            }
+        }
+
+        // Passthrough any items that weren't covered in the agent loop
+        for (pos in remainingLocalPositions) {
+            localResultMap[pos] = items[pos].second
+        }
+
+        AppLogger.i(TAG, "Agent loop done: ${items.size} items, $totalTokens tokens over $iteration iteration(s), " +
+            "${if (remainingLocalPositions.isEmpty()) "all covered" else "${remainingLocalPositions.size} passthrough"}")
+
+        return LlmChunkResult(translations = localResultMap, tokensUsed = totalTokens)
+    }
+
+
 
     // ──────────────────────────────────────────────
     //  Rejoin segments per text

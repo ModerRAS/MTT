@@ -144,6 +144,18 @@ class TranslationService : Service() {
         startForeground(NOTIFICATION_ID_TRANSLATION, buildTranslationNotification())
 
         activeJob = serviceScope.launch {
+            // Resolve cache projectId from job's source file name (for file-scoped caching)
+            val cacheProjectId = if (jobId != null) {
+                try {
+                    translationJobDao.getMetadataById(jobId)?.sourceFileName
+                        ?: CacheManager.DEFAULT_PROJECT_ID
+                } catch (_: Exception) {
+                    CacheManager.DEFAULT_PROJECT_ID
+                }
+            } else {
+                CacheManager.DEFAULT_PROJECT_ID
+            }
+
             // Periodic notification updater (every 5 seconds)
             val updaterJob = launch {
                 while (isActive) {
@@ -153,7 +165,7 @@ class TranslationService : Service() {
             }
 
             try {
-                executor.executeBatch(texts, config).collect { result ->
+                executor.executeBatch(texts, config, projectId = cacheProjectId).collect { result ->
                     when (result) {
                         is BatchResult.Started -> {
                             _serviceProgress.value = _serviceProgress.value.copy(
@@ -176,18 +188,8 @@ class TranslationService : Service() {
                                 completedItems = texts.size,
                                 status = "翻译完成"
                             )
-                            // Save results to cache
-                            result.items.forEachIndexed { i, translated ->
-                                if (i < texts.size) {
-                                    cacheManager.saveToCache(
-                                        sourceText = texts[i],
-                                        translation = translated,
-                                        mode = config.mode,
-                                        modelId = config.model.modelId
-                                    )
-                                }
-                            }
                             // Final persistence: mark job as COMPLETED
+                            // (cache entries were already saved incrementally per chunk)
                             persistJobUpdate(
                                 status = TranslationJobEntity.STATUS_COMPLETED,
                                 completedItems = texts.size
