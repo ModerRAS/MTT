@@ -27,7 +27,8 @@ sealed class BatchResult {
         val items: List<String>,
         val tokensUsed: Int,
         val inputTokens: Int,
-        val outputTokens: Int
+        val outputTokens: Int,
+        val cacheTokens: Int
     ) : BatchResult()
 
     /** Batch failed irrecoverably. */

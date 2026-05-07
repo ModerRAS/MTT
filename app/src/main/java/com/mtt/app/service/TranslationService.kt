@@ -190,7 +190,8 @@ class TranslationService : Service() {
                                 completedItems = texts.size,
                                 status = "翻译完成",
                                 totalInputTokens = _serviceProgress.value.totalInputTokens + result.inputTokens,
-                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens
+                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens,
+                                totalCacheTokens = _serviceProgress.value.totalCacheTokens + result.cacheTokens
                             )
                             // Final persistence: mark job as COMPLETED
                             // (cache entries were already saved incrementally per chunk)

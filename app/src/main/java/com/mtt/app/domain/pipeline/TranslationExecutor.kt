@@ -107,7 +107,7 @@ class TranslationExecutor @Inject constructor(
         if (texts.isEmpty()) {
             emit(BatchResult.Success(
                 batchIndex = 0, items = emptyList(), tokensUsed = 0,
-                inputTokens = 0, outputTokens = 0
+                inputTokens = 0, outputTokens = 0, cacheTokens = 0
             ))
             return@flow
         }
@@ -176,19 +176,43 @@ class TranslationExecutor @Inject constructor(
             textToLlmPositions.getOrPut(textIdx) { mutableListOf() }.add(pos)
         }
 
-        AppLogger.d(TAG, "Orchestrate: ${texts.size} texts → ${globalNonEmptyItems.size} segments → " +
-            "${llmPositions.size} LLM items (${skipPositions.size} skip)")
-
         // Pre-fill result map with skip passthroughs
         val globalResultMap = mutableMapOf<Int, String>()
         for (pos in skipPositions) {
             globalResultMap[pos] = globalNonEmptyItems[pos].second
         }
 
+        var cacheTokensIncrement = 0
+        var cacheHitCount = 0
+
+        // ── Phase 2: Cache check — skip already-translated texts ──
+        val llmIterator = llmPositions.iterator()
+        while (llmIterator.hasNext()) {
+            val pos = llmIterator.next()
+            val itemText = globalNonEmptyItems[pos].second
+            val cached = cacheManager.getCached(itemText, config.mode, config.model.modelId)
+            if (cached != null) {
+                globalResultMap[pos] = cached.content
+                cacheTokensIncrement += TokenEstimator.estimate(itemText)
+                cacheHitCount++
+                llmIterator.remove()
+                // Remove from textToLlmPositions
+                val textIdx = posToTextIndex[pos]!!
+                val textPositions = textToLlmPositions[textIdx]
+                if (textPositions != null) {
+                    textPositions.remove(pos)
+                    if (textPositions.isEmpty()) textToLlmPositions.remove(textIdx)
+                }
+            }
+        }
+
+        AppLogger.d(TAG, "Orchestrate: ${texts.size} texts → ${globalNonEmptyItems.size} segments → " +
+            "${skipPositions.size} skip + ${llmPositions.size} LLM + ${cacheTokensIncrement} cached tokens")
+
         // Track saved texts to avoid duplicate cache writes
         val savedTexts = mutableSetOf<Int>()
 
-        // ── Phase 2: Build glossary section once (same for all chunks) ──
+        // ── Phase 3: Build glossary section once (same for all chunks) ──
         val glossaryEntries = config.glossaryEntries.map { entity ->
             GlossaryEntry(
                 source = entity.sourceTerm,
@@ -205,8 +229,8 @@ class TranslationExecutor @Inject constructor(
         // ── Phase 3: Chunk LLM items by batchSize (after filtering!) ──
         val llmChunks: List<List<Int>> = llmPositions.chunked(batchSize)
 
-        // Emit initial progress: skip items are immediately "done"
-        var completedCount = skipPositions.size
+        // Emit initial progress: skip + cache hits are immediately "done"
+        var completedCount = skipPositions.size + cacheHitCount
         emitProgress(
             BatchResult.Progress(
                 batchIndex = 0,
@@ -310,7 +334,8 @@ class TranslationExecutor @Inject constructor(
                 batchIndex = 0, items = translatedItems,
                 tokensUsed = totalTokens,
                 inputTokens = totalInputTokens,
-                outputTokens = totalOutputTokens
+                outputTokens = totalOutputTokens,
+                cacheTokens = cacheTokensIncrement
             )
         } else {
             BatchResult.Failure(

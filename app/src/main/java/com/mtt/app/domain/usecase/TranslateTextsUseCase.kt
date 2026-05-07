@@ -32,7 +32,7 @@ class TranslateTextsUseCase @Inject constructor(
         config: TranslationConfig
     ): Flow<BatchResult> = flow {
         if (texts.isEmpty()) {
-            emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0, inputTokens = 0, outputTokens = 0))
+            emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0, inputTokens = 0, outputTokens = 0, cacheTokens = 0))
             return@flow
         }
 
@@ -64,7 +64,11 @@ class TranslateTextsUseCase @Inject constructor(
                     outputTokens = 0
                 )
             )
-            emit(BatchResult.Success(batchIndex = 0, items = sorted, tokensUsed = 0, inputTokens = 0, outputTokens = 0))
+            // Estimate cache tokens for all items that were served from cache
+            val cachedTokens = cachedPairs.sumOf { (_, t) ->
+                com.mtt.app.data.llm.TokenEstimator.estimate(t).coerceAtLeast(1)
+            }
+            emit(BatchResult.Success(batchIndex = 0, items = sorted, tokensUsed = 0, inputTokens = 0, outputTokens = 0, cacheTokens = cachedTokens))
             return@flow
         }
 
@@ -137,13 +141,18 @@ class TranslateTextsUseCase @Inject constructor(
                             outputTokens = result.outputTokens
                         )
                     )
+                    // Estimate cache tokens for items served from use-case cache
+                    val useCaseCacheTokens = cachedPairs.sumOf { (_, t) ->
+                        com.mtt.app.data.llm.TokenEstimator.estimate(t).coerceAtLeast(1)
+                    }
                     emit(
                         BatchResult.Success(
                             batchIndex = 0,
                             items = merged,
                             tokensUsed = result.tokensUsed,
                             inputTokens = result.inputTokens,
-                            outputTokens = result.outputTokens
+                            outputTokens = result.outputTokens,
+                            cacheTokens = useCaseCacheTokens + result.cacheTokens
                         )
                     )
                 }
