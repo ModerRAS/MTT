@@ -105,7 +105,10 @@ class TranslationExecutor @Inject constructor(
         projectId: String = CacheManager.DEFAULT_PROJECT_ID
     ): Flow<BatchResult> = flow {
         if (texts.isEmpty()) {
-            emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0))
+            emit(BatchResult.Success(
+                batchIndex = 0, items = emptyList(), tokensUsed = 0,
+                inputTokens = 0, outputTokens = 0
+            ))
             return@flow
         }
 
@@ -139,12 +142,18 @@ class TranslationExecutor @Inject constructor(
             TextSegments(idx, result.segments, result.metadata)
         }
 
-        // Collect all non-empty segments with global numbering
+        // Collect all non-empty segments with global numbering.
+        // Also build a (textIdx, segIdx) → globalPos map for cache-saving rebuild.
         val globalNonEmptyItems = mutableListOf<Pair<Int, String>>()  // (globalIndex, text)
-        for (ts in allTextSegments) {
-            for (seg in ts.segments) {
+        val posToTextIndex = mutableMapOf<Int, Int>()  // globalNonEmptyItems position → textIndex
+        val segmentGlobalPosMap = mutableMapOf<Pair<Int, Int>, Int>()  // (textIdx, segIdx) → globalPos
+        for ((textIdx, ts) in allTextSegments.withIndex()) {
+            for ((segIdx, seg) in ts.segments.withIndex()) {
                 if (!seg.isEmpty) {
-                    globalNonEmptyItems.add((globalNonEmptyItems.size + 1) to seg.text)
+                    val pos = globalNonEmptyItems.size
+                    globalNonEmptyItems.add((pos + 1) to seg.text)
+                    posToTextIndex[pos] = textIdx
+                    segmentGlobalPosMap[textIdx to segIdx] = pos
                 }
             }
         }
@@ -152,6 +161,7 @@ class TranslationExecutor @Inject constructor(
         // Identify skip items (pure numbers, EV codes, etc.)
         val skipPositions = mutableSetOf<Int>()
         val llmPositions = mutableListOf<Int>()  // positions in globalNonEmptyItems that need LLM
+        val textToLlmPositions = mutableMapOf<Int, MutableList<Int>>()  // textIdx → its LLM-bound positions
         for ((pos, item) in globalNonEmptyItems.withIndex()) {
             if (SkipPatterns.shouldSkip(item.second)) {
                 skipPositions.add(pos)
@@ -159,6 +169,11 @@ class TranslationExecutor @Inject constructor(
             } else {
                 llmPositions.add(pos)
             }
+        }
+        // Build text→LLM-positions map
+        for (pos in llmPositions) {
+            val textIdx = posToTextIndex[pos]!!
+            textToLlmPositions.getOrPut(textIdx) { mutableListOf() }.add(pos)
         }
 
         AppLogger.d(TAG, "Orchestrate: ${texts.size} texts → ${globalNonEmptyItems.size} segments → " +
@@ -169,6 +184,9 @@ class TranslationExecutor @Inject constructor(
         for (pos in skipPositions) {
             globalResultMap[pos] = globalNonEmptyItems[pos].second
         }
+
+        // Track saved texts to avoid duplicate cache writes
+        val savedTexts = mutableSetOf<Int>()
 
         // ── Phase 2: Build glossary section once (same for all chunks) ──
         val glossaryEntries = config.glossaryEntries.map { entity ->
@@ -194,11 +212,15 @@ class TranslationExecutor @Inject constructor(
                 batchIndex = 0,
                 completed = completedCount,
                 total = texts.size,
-                stage = "过滤 ${skipPositions.size} 条跳过项"
+                stage = "过滤 ${skipPositions.size} 条跳过项",
+                inputTokens = 0,
+                outputTokens = 0
             )
         )
 
         var totalTokens = 0
+        var totalInputTokens = 0
+        var totalOutputTokens = 0
 
         // Concurrency: process chunks in groups, each group in parallel
         val concurrencyLimit = config.concurrency.coerceIn(1, 10)
@@ -222,7 +244,9 @@ class TranslationExecutor @Inject constructor(
                             }
                             Pair(chunkPositions, LlmChunkResult(
                                 translations = globalTranslations,
-                                tokensUsed = chunkResult.tokensUsed
+                                tokensUsed = chunkResult.tokensUsed,
+                                inputTokens = chunkResult.inputTokens,
+                                outputTokens = chunkResult.outputTokens
                             ))
                         }
                     }
@@ -231,13 +255,23 @@ class TranslationExecutor @Inject constructor(
                     val (chunkPositions, chunkResult) = deferred.await()
                     globalResultMap.putAll(chunkResult.translations)
                     totalTokens += chunkResult.tokensUsed
+                    totalInputTokens += chunkResult.inputTokens
+                    totalOutputTokens += chunkResult.outputTokens
                     completedCount += chunkPositions.size
+                    // Incremental cache save: check for fully-completed texts
+                    saveCompletedTexts(
+                        chunkPositions, globalResultMap, posToTextIndex,
+                        texts, allTextSegments, textToLlmPositions,
+                        savedTexts, segmentGlobalPosMap, config, projectId
+                    )
                     emitProgress(
                         BatchResult.Progress(
                             batchIndex = 0,
                             completed = completedCount,
                             total = texts.size,
-                            stage = "翻译中 $completedCount/${texts.size}"
+                            stage = "翻译中 $completedCount/${texts.size}",
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens
                         )
                     )
                 }
@@ -250,30 +284,60 @@ class TranslationExecutor @Inject constructor(
         }
         val translatedItems = rebuildTexts(allTextSegments, mergedSegments)
 
-        // ── Phase 5: Save all results to cache ──
+        // ── Phase 5: Save any remaining unsaved texts ──
+        // (texts whose segments straddled chunk boundaries or weren't completed
+        //  by saveCompletedTexts for any reason)
         try {
-            texts.zip(translatedItems).forEach { (source, translated) ->
-                cacheManager.saveToCache(
-                    sourceText = source,
-                    translation = translated,
-                    mode = config.mode,
-                    modelId = config.model.modelId,
-                    projectId = projectId
-                )
+            for ((textIdx, translated) in translatedItems.withIndex()) {
+                if (textIdx !in savedTexts) {
+                    cacheManager.saveToCache(
+                        sourceText = texts[textIdx],
+                        translation = translated,
+                        mode = config.mode,
+                        modelId = config.model.modelId,
+                        projectId = projectId
+                    )
+                    savedTexts.add(textIdx)
+                }
             }
-            AppLogger.d(TAG, "Saved ${translatedItems.size} items to cache for project [$projectId]")
+            AppLogger.d(TAG, "Cache final: saved ${savedTexts.size}/${texts.size} texts for project [$projectId]")
         } catch (e: Exception) {
-            AppLogger.e(TAG, "Cache save failed (non-fatal)", e)
+            AppLogger.e(TAG, "Final cache save failed (non-fatal)", e)
         }
 
         return if (translatedItems.isNotEmpty()) {
-            BatchResult.Success(batchIndex = 0, items = translatedItems, tokensUsed = totalTokens)
+            BatchResult.Success(
+                batchIndex = 0, items = translatedItems,
+                tokensUsed = totalTokens,
+                inputTokens = totalInputTokens,
+                outputTokens = totalOutputTokens
+            )
         } else {
             BatchResult.Failure(
                 batchIndex = 0,
                 error = TranslationException("Translation yielded no results")
             )
         }
+    }
+
+    // ──────────────────────────────────────────────
+    //  Control character preservation check
+    // ──────────────────────────────────────────────
+
+    /**
+     * Verifies that meaningful control characters (\n, \r, \t) from the
+     * source text are preserved in the translation. Compares character counts.
+     */
+    private fun hasControlCharsPreserved(source: String, translated: String): Boolean {
+        val controlChars = setOf('\n', '\r', '\t')
+        for (ch in controlChars) {
+            val srcCount = source.count { it == ch }
+            val tgtCount = translated.count { it == ch }
+            if (srcCount > 0 && tgtCount < srcCount) {
+                return false
+            }
+        }
+        return true
     }
 
     // ──────────────────────────────────────────────
@@ -357,7 +421,9 @@ class TranslationExecutor @Inject constructor(
     /** Result of running the LLM agent loop on a single chunk of pre-filtered items. */
     private data class LlmChunkResult(
         val translations: Map<Int, String>,  // local position → translation
-        val tokensUsed: Int
+        val tokensUsed: Int,
+        val inputTokens: Int,
+        val outputTokens: Int
     )
 
     // ──────────────────────────────────────────────
@@ -378,7 +444,7 @@ class TranslationExecutor @Inject constructor(
         prohibitionSection: String
     ): LlmChunkResult {
         if (items.isEmpty()) {
-            return LlmChunkResult(translations = emptyMap(), tokensUsed = 0)
+            return LlmChunkResult(translations = emptyMap(), tokensUsed = 0, inputTokens = 0, outputTokens = 0)
         }
 
         // Token estimation
@@ -393,7 +459,7 @@ class TranslationExecutor @Inject constructor(
             AppLogger.w(TAG, "Chunk of ${items.size} items exceeds context window, passthrough all")
             return LlmChunkResult(
                 translations = items.indices.associate { it to items[it].second },
-                tokensUsed = 0
+                tokensUsed = 0, inputTokens = 0, outputTokens = 0
             )
         }
 
@@ -404,13 +470,15 @@ class TranslationExecutor @Inject constructor(
             AppLogger.w(TAG, "Rate limited, passthrough ${items.size} items")
             return LlmChunkResult(
                 translations = items.indices.associate { it to items[it].second },
-                tokensUsed = 0
+                tokensUsed = 0, inputTokens = 0, outputTokens = 0
             )
         }
 
         val localResultMap = mutableMapOf<Int, String>()  // local position → translation
         val remainingLocalPositions = items.indices.toMutableList()
         var totalTokens = 0
+        var totalInputTokens = 0
+        var totalOutputTokens = 0
         var iteration = 0
         val MAX_ITERATIONS = 5
 
@@ -442,28 +510,42 @@ class TranslationExecutor @Inject constructor(
                 break
             }
             totalTokens += response.tokensUsed
-            AppLogger.i(TAG, "LLM response iteration $iteration: ${response.content.length} chars, ${response.tokensUsed} tokens, model=${response.model}")
+            totalInputTokens += response.inputTokens
+            totalOutputTokens += response.outputTokens
+            AppLogger.i(TAG, "LLM response iteration $iteration: ${response.content.length} chars, ${response.tokensUsed} tokens (in=${response.inputTokens}, out=${response.outputTokens}), model=${response.model}")
 
             // Tool call result: {source, translated} — positional match
             if (response.translationPairs != null) {
                 val numPrefix = Regex("""^\d+[.\、]\s*""")
                 val count = minOf(response.translationPairs.size, remainingLocalPositions.size)
+                val newlineRetry = mutableListOf<Int>()
                 for (i in 0 until count) {
+                    val globalPos = remainingLocalPositions[i]
                     val rawTranslated = response.translationPairs[i].translated
-                    val originalText = items[remainingLocalPositions[i]].second
+                    val originalText = items[globalPos].second
                     val translated = if (numPrefix.containsMatchIn(originalText)) {
                         rawTranslated
                     } else {
                         numPrefix.replaceFirst(rawTranslated, "")
                     }
-                    localResultMap[remainingLocalPositions[i]] = translated
+                    // Check that control characters (\n, \r, \t) are preserved
+                    if (!hasControlCharsPreserved(originalText, translated)) {
+                        AppLogger.d(TAG, "Control char loss for #${items[globalPos].first}, will retry")
+                        newlineRetry.add(globalPos)
+                    } else {
+                        localResultMap[globalPos] = translated
+                    }
                 }
+                // Keep unmatched items + newline-retry items for next iteration
                 val toKeep = remainingLocalPositions.drop(count)
                 remainingLocalPositions.clear()
                 remainingLocalPositions.addAll(toKeep)
-                AppLogger.d(TAG, "Tool call iteration $iteration: +$count matched, ${remainingLocalPositions.size} remaining")
+                remainingLocalPositions.addAll(newlineRetry)
+                val matched = count - newlineRetry.size
+                AppLogger.d(TAG, "Tool call iteration $iteration: +$matched matched, " +
+                    "${newlineRetry.size} control-char-retry, ${remainingLocalPositions.size} remaining")
 
-                if (count == 0) {
+                if (matched == 0 && newlineRetry.isEmpty() && remainingLocalPositions.isNotEmpty()) {
                     AppLogger.w(TAG, "Tool call made no progress, passthrough ${remainingLocalPositions.size} items")
                     for (pos in remainingLocalPositions) localResultMap[pos] = items[pos].second
                     remainingLocalPositions.clear()
@@ -496,13 +578,80 @@ class TranslationExecutor @Inject constructor(
             localResultMap[pos] = items[pos].second
         }
 
-        AppLogger.i(TAG, "Agent loop done: ${items.size} items, $totalTokens tokens over $iteration iteration(s), " +
+        AppLogger.i(TAG, "Agent loop done: ${items.size} items, $totalTokens tokens (in=$totalInputTokens, out=$totalOutputTokens) over $iteration iteration(s), " +
             "${if (remainingLocalPositions.isEmpty()) "all covered" else "${remainingLocalPositions.size} passthrough"}")
 
-        return LlmChunkResult(translations = localResultMap, tokensUsed = totalTokens)
+        return LlmChunkResult(
+            translations = localResultMap,
+            tokensUsed = totalTokens,
+            inputTokens = totalInputTokens,
+            outputTokens = totalOutputTokens
+        )
     }
 
 
+
+    // ──────────────────────────────────────────────
+    //  Incremental cache per chunk
+    // ──────────────────────────────────────────────
+
+    /**
+     * After a chunk completes, find texts whose LLM-bound segments are now fully
+     * translated, rebuild them from their segment translations, and save to cache.
+     */
+    private suspend fun saveCompletedTexts(
+        chunkPositions: List<Int>,
+        globalResultMap: Map<Int, String>,
+        posToTextIndex: Map<Int, Int>,
+        texts: List<String>,
+        allTextSegments: List<TextSegments>,
+        textToLlmPositions: Map<Int, List<Int>>,
+        savedTexts: MutableSet<Int>,
+        segmentGlobalPosMap: Map<Pair<Int, Int>, Int>,
+        config: TranslationConfig,
+        projectId: String
+    ) {
+        val touchedTexts = mutableSetOf<Int>()
+        for (pos in chunkPositions) {
+            val textIdx = posToTextIndex[pos] ?: continue
+            touchedTexts.add(textIdx)
+        }
+
+        for (textIdx in touchedTexts) {
+            if (textIdx in savedTexts) continue
+            val llmPositions = textToLlmPositions[textIdx] ?: continue
+            if (!llmPositions.all { it in globalResultMap }) continue
+
+            try {
+                val ts = allTextSegments[textIdx]
+                val segTranslations = mutableListOf<String>()
+                for ((segIdx, seg) in ts.segments.withIndex()) {
+                    if (seg.isEmpty) {
+                        segTranslations.add("")
+                    } else {
+                        val globalPos = segmentGlobalPosMap[textIdx to segIdx]
+                            ?: continue
+                        segTranslations.add(globalResultMap[globalPos] ?: seg.text)
+                    }
+                }
+                val rebuilt = TextPreprocessor.postprocess(segTranslations, ts.metadata)
+                cacheManager.saveToCache(
+                    sourceText = texts[textIdx],
+                    translation = rebuilt,
+                    mode = config.mode,
+                    modelId = config.model.modelId,
+                    projectId = projectId
+                )
+                savedTexts.add(textIdx)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "saveCompletedTexts failed for text #$textIdx", e)
+            }
+        }
+
+        if (touchedTexts.isNotEmpty()) {
+            AppLogger.d(TAG, "Cache chunk: saved ${savedTexts.size} texts so far")
+        }
+    }
 
     // ──────────────────────────────────────────────
     //  Rejoin segments per text

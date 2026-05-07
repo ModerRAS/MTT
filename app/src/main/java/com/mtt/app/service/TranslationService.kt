@@ -175,7 +175,9 @@ class TranslationService : Service() {
                         is BatchResult.Progress -> {
                             _serviceProgress.value = _serviceProgress.value.copy(
                                 completedItems = result.completed,
-                                status = "翻译中"
+                                status = "翻译中",
+                                totalInputTokens = _serviceProgress.value.totalInputTokens + result.inputTokens,
+                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens
                             )
                             // Persist progress to DB every progress tick
                             persistJobUpdate(
@@ -186,7 +188,9 @@ class TranslationService : Service() {
                         is BatchResult.Success -> {
                             _serviceProgress.value = _serviceProgress.value.copy(
                                 completedItems = texts.size,
-                                status = "翻译完成"
+                                status = "翻译完成",
+                                totalInputTokens = _serviceProgress.value.totalInputTokens + result.inputTokens,
+                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens
                             )
                             // Final persistence: mark job as COMPLETED
                             // (cache entries were already saved incrementally per chunk)

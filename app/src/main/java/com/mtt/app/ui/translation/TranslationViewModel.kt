@@ -1063,7 +1063,9 @@ class TranslationViewModel @Inject constructor(
                     it.copy(
                         completedItems = translatedResults.size,
                         totalItems = translatedResults.size,
-                        status = "Complete"
+                        status = "Complete",
+                        totalInputTokens = it.totalInputTokens + result.inputTokens,
+                        totalOutputTokens = it.totalOutputTokens + result.outputTokens
                     )
                 }
                 _uiState.value = TranslationUiState.Completed
