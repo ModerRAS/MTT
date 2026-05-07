@@ -185,14 +185,16 @@ class TranslationExecutor @Inject constructor(
         var cacheTokensIncrement = 0
         var cacheHitCount = 0
 
-        // ── Phase 2: Cache check — skip already-translated texts ──
+        // ── Phase 2: Cache check (batch) — skip already-translated texts ──
+        val llmTexts = llmPositions.map { globalNonEmptyItems[it].second }
+        val cachedMap = cacheManager.getCachedBatch(llmTexts, config.mode, config.model.modelId, projectId)
         val llmIterator = llmPositions.iterator()
         while (llmIterator.hasNext()) {
             val pos = llmIterator.next()
             val itemText = globalNonEmptyItems[pos].second
-            val cached = cacheManager.getCached(itemText, config.mode, config.model.modelId)
-            if (cached != null) {
-                globalResultMap[pos] = cached.content
+            val cachedContent = cachedMap[itemText]
+            if (cachedContent != null) {
+                globalResultMap[pos] = cachedContent
                 cacheTokensIncrement += TokenEstimator.estimate(itemText)
                 cacheHitCount++
                 llmIterator.remove()

@@ -37,13 +37,17 @@ class CacheManager(
     /**
      * Look up a cached translation by source text, mode, and model ID.
      * Returns null if no matching completed translation is found.
+     *
+     * @param projectId The cache project scope (e.g., source file name).
+     *                   Defaults to [cacheProjectId] for backward compat.
      */
     suspend fun getCached(
         sourceText: String,
         mode: TranslationMode,
-        modelId: String
+        modelId: String,
+        projectId: String = cacheProjectId
     ): TranslationResponse? {
-        val allItems = cacheItemDao.getByProjectId(cacheProjectId)
+        val allItems = cacheItemDao.getByProjectId(projectId)
         val match = allItems.firstOrNull { item ->
             item.sourceText == sourceText &&
                 item.model == modelId &&
@@ -60,6 +64,41 @@ class CacheManager(
             misses.incrementAndGet()
             null
         }
+    }
+
+    /**
+     * Batch cache lookup: loads all completed cache entries for [projectId] into
+     * a HashMap once, then performs O(1) lookups for each [sourceText].
+     *
+     * This avoids N+1 database queries when checking many texts against the cache.
+     *
+     * @return Map of sourceText → translatedText for all cache hits.
+     */
+    suspend fun getCachedBatch(
+        sourceTexts: List<String>,
+        mode: TranslationMode,
+        modelId: String,
+        projectId: String = cacheProjectId
+    ): Map<String, String> {
+        val allItems = cacheItemDao.getByProjectId(projectId)
+        val cacheMap = HashMap<String, String>(allItems.size)
+        for (item in allItems) {
+            if (item.status in completedStatuses && item.model == modelId) {
+                cacheMap[item.sourceText] = item.translatedText
+            }
+        }
+
+        val result = HashMap<String, String>(sourceTexts.size)
+        for (text in sourceTexts) {
+            val translated = cacheMap[text]
+            if (translated != null) {
+                result[text] = translated
+                hits.incrementAndGet()
+            } else {
+                misses.incrementAndGet()
+            }
+        }
+        return result
     }
 
     /**
