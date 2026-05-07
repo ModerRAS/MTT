@@ -371,11 +371,15 @@ class TranslationExecutor @Inject constructor(
             // Tool call result: {source, translated} pairs
             // Tool call already pairs each translation to its source — use positionally.
             // Model returns results in the same order as input items.
+            // Strip any numbering prefix ("N. " or "N、") from translated text,
+            // since the prompt includes numbering that the model may echo back.
             if (response.translationPairs != null) {
+                val numPrefix = Regex("""^\d+[.\、]\s*""")
                 val count = minOf(response.translationPairs.size, remainingPositions.size)
                 val toKeep = remainingPositions.drop(count)
                 for (i in 0 until count) {
-                    resultMap[remainingPositions[i]] = response.translationPairs[i].translated
+                    val translated = numPrefix.replaceFirst(response.translationPairs[i].translated, "")
+                    resultMap[remainingPositions[i]] = translated
                 }
                 remainingPositions.clear()
                 remainingPositions.addAll(toKeep)
