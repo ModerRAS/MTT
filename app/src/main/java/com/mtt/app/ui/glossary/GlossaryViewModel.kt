@@ -1,12 +1,17 @@
 package com.mtt.app.ui.glossary
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mtt.app.core.error.Result
 import com.mtt.app.data.io.SourceTextRepository
+import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.model.ExtractedTerm
+import com.mtt.app.data.model.ExtractionJobEntity
 import com.mtt.app.data.model.GlossaryEntryEntity
 import com.mtt.app.data.model.GlossaryEntryUiModel
 import com.mtt.app.data.model.toEntity
@@ -15,7 +20,9 @@ import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.glossary.GlossaryEntry
 import com.mtt.app.domain.glossary.GlossaryEngine
 import com.mtt.app.domain.usecase.ExtractTermsUseCase
+import com.mtt.app.service.TranslationService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,7 +52,9 @@ class GlossaryViewModel @Inject constructor(
     private val glossaryDao: GlossaryDao,
     private val sourceTextRepository: SourceTextRepository,
     private val extractTermsUseCase: ExtractTermsUseCase,
-    private val secureStorage: SecureStorage
+    private val secureStorage: SecureStorage,
+    private val extractionJobDao: ExtractionJobDao,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GlossaryUiState())
@@ -79,6 +88,36 @@ class GlossaryViewModel @Inject constructor(
         viewModelScope.launch {
             sourceTextRepository.sourceTexts.collect { texts ->
                 _uiState.update { it.copy(hasSourceTexts = texts.isNotEmpty()) }
+            }
+        }
+        checkForIncompleteExtractionJob()
+    }
+
+    /**
+     * On initialization, check for any incomplete extraction jobs from a previous session.
+     * If found, restore source texts from the persisted job and notify the user so they can
+     * re-run extraction without re-selecting the source file.
+     */
+    private fun checkForIncompleteExtractionJob() {
+        viewModelScope.launch {
+            try {
+                val terminalStatuses = listOf(
+                    ExtractionJobEntity.STATUS_COMPLETED,
+                    ExtractionJobEntity.STATUS_FAILED
+                )
+                val incomplete = extractionJobDao.getLatestIncomplete(terminalStatuses)
+                if (incomplete != null) {
+                    // Restore source texts from persisted JSON so user can re-run extraction
+                    val restoredTexts = ExtractionJobEntity.deserializeTexts(incomplete.sourceTextsJson)
+                    if (restoredTexts.isNotEmpty()) {
+                        sourceTextRepository.setSourceTexts(restoredTexts)
+                    }
+                    _uiState.update { it.copy(
+                        errorMessage = "上次术语提取未完成，请重新提取"
+                    ) }
+                }
+            } catch (_: Exception) {
+                // Non-critical
             }
         }
     }
@@ -326,34 +365,130 @@ class GlossaryViewModel @Inject constructor(
         _pendingDeleteEntry.value = null
     }
 
+    // ── Glossary Extraction ──────────────────────────
+
+    /**
+     * When true (default in production), extraction runs through [TranslationService]
+     * foreground service with notification and persistence. Set to false in unit tests
+     * to run directly via [extractTermsDirectly].
+     */
+    internal var useService: Boolean = true
+
     /**
      * Extract terms from source texts using AI.
-     * Shows review dialog on success, error message on failure.
-     * Reports extraction progress via [_extractionProgress].
+     *
+     * When [useService] is true (production), runs through [TranslationService]
+     * foreground service with persistent notification. Otherwise runs directly
+     * via [extractTermsDirectly] for testability.
      */
     fun extractTerms() {
-        viewModelScope.launch {
-            _isExtracting.value = true
-            _extractionProgress.value = ExtractionProgress(0, 0)
-            val texts = sourceTextRepository.sourceTexts.value
-            val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+        if (useService) {
+            extractTermsViaService()
+        } else {
+            viewModelScope.launch {
+                extractTermsDirectly()
+            }
+        }
+    }
 
-            when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
-                _extractionProgress.value = ExtractionProgress(completed, total)
-            }) {
-                is Result.Success -> {
-                    if (result.data.isNotEmpty()) {
-                        _extractedTerms.value = result.data
+    /**
+     * Run extraction directly via [ExtractTermsUseCase] — no foreground service.
+     * Internal visibility for test access.
+     */
+    internal suspend fun extractTermsDirectly() {
+        _isExtracting.value = true
+        _extractionProgress.value = ExtractionProgress(0, 0)
+        val texts = sourceTextRepository.sourceTexts.value
+        val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+
+        when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
+            _extractionProgress.value = ExtractionProgress(completed, total)
+        }) {
+            is Result.Success -> {
+                if (result.data.isNotEmpty()) {
+                    _extractedTerms.value = result.data
+                    _showExtractionReview.value = true
+                } else {
+                    _uiState.update { it.copy(errorMessage = "未发现候选术语") }
+                }
+            }
+            is Result.Failure -> {
+                _uiState.update { it.copy(errorMessage = "术语提取失败: ${result.exception.message}") }
+            }
+        }
+        _isExtracting.value = false
+    }
+
+    /**
+     * Run glossary extraction through [TranslationService] foreground service.
+     * Creates a persisted [ExtractionJobEntity] and shows progress notification.
+     */
+    private fun extractTermsViaService() {
+        val texts = sourceTextRepository.sourceTexts.value
+        if (texts.isEmpty()) {
+            _uiState.update { it.copy(errorMessage = "没有可分析的文本") }
+            return
+        }
+
+        _isExtracting.value = true
+        _extractionProgress.value = ExtractionProgress(0, 0)
+
+        val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+
+        // Create persisted job record with source texts for resume after process death
+        val jobId = java.util.UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val job = ExtractionJobEntity(
+            jobId = jobId,
+            status = ExtractionJobEntity.STATUS_FREQUENCY_ANALYSIS,
+            totalChunks = 0,
+            completedChunks = 0,
+            sourceLang = srcLang,
+            sourceTextsJson = ExtractionJobEntity.serializeTexts(texts),
+            createdAt = now,
+            updatedAt = now
+        )
+
+        viewModelScope.launch {
+            extractionJobDao.insert(job)
+        }
+
+        // Set companion shared state for the service
+        TranslationService.pendingExtractionTexts = texts
+        TranslationService.pendingExtractionSourceLang = srcLang
+        TranslationService.pendingExtractionJobId = jobId
+        TranslationService.pendingExtractionResult = null
+
+        // Start the foreground service
+        val intent = Intent(context, TranslationService::class.java).apply {
+            action = TranslationService.ACTION_EXTRACT_TERMS
+        }
+        ContextCompat.startForegroundService(context, intent)
+
+        // Observe progress from the service
+        viewModelScope.launch {
+            TranslationService.extractionProgress.collect { ep ->
+                _extractionProgress.value = ep
+
+                if (ep.isError) {
+                    _uiState.update { it.copy(errorMessage = ep.errorMessage ?: "术语提取失败") }
+                    _isExtracting.value = false
+                    return@collect
+                }
+
+                _isExtracting.value = ep.total > 0 && ep.completed < ep.total
+
+                if (ep.total > 0 && ep.completed >= ep.total) {
+                    val result = TranslationService.pendingExtractionResult
+                    if (result != null && result.isNotEmpty()) {
+                        _extractedTerms.value = result
                         _showExtractionReview.value = true
                     } else {
                         _uiState.update { it.copy(errorMessage = "未发现候选术语") }
                     }
-                }
-                is Result.Failure -> {
-                    _uiState.update { it.copy(errorMessage = "术语提取失败: ${result.exception.message}") }
+                    _isExtracting.value = false
                 }
             }
-            _isExtracting.value = false
         }
     }
 
@@ -426,13 +561,16 @@ class GlossaryViewModel @Inject constructor(
 
 /**
  * Extraction progress state.
- * @param completed Number of chunks processed so far
- * @param total     Total number of chunks to process
+ * @param completed    Number of chunks processed so far
+ * @param total        Total number of chunks to process
+ * @param errorMessage Non-null when extraction has failed; contains the error description
  */
 data class ExtractionProgress(
     val completed: Int,
-    val total: Int
+    val total: Int,
+    val errorMessage: String? = null
 ) {
     val percentage: Float get() = if (total > 0) completed.toFloat() / total else 0f
     val isIndeterminate: Boolean get() = total == 0
+    val isError: Boolean get() = errorMessage != null
 }

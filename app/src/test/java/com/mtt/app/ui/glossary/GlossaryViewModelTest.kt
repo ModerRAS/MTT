@@ -1,6 +1,8 @@
 package com.mtt.app.ui.glossary
 
+import android.content.Context
 import com.mtt.app.data.io.SourceTextRepository
+import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.model.GlossaryEntryEntity
 import com.mtt.app.data.security.SecureStorage
@@ -34,6 +36,8 @@ class GlossaryViewModelTest {
     private lateinit var mockSourceTextRepository: SourceTextRepository
     private lateinit var mockExtractTermsUseCase: ExtractTermsUseCase
     private lateinit var mockSecureStorage: SecureStorage
+    private lateinit var mockExtractionJobDao: ExtractionJobDao
+    private val mockContext: Context = mockk(relaxed = true)
     private lateinit var viewModel: GlossaryViewModel
 
     @Before
@@ -45,6 +49,7 @@ class GlossaryViewModelTest {
         }
         mockExtractTermsUseCase = mockk(relaxed = true)
         mockSecureStorage = mockk(relaxed = true)
+        mockExtractionJobDao = mockk(relaxed = true)
     }
 
     @After
@@ -81,7 +86,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns mockEntries
 
         // When
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // Then
@@ -103,7 +108,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -140,7 +145,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -167,7 +172,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -194,7 +199,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -231,7 +236,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.insertAll(any()) } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -250,7 +255,7 @@ class GlossaryViewModelTest {
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
         coEvery { mockGlossaryDao.deleteByProjectId("default_project") } returns Unit
 
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // When
@@ -268,7 +273,7 @@ class GlossaryViewModelTest {
     fun `clearMessages clears success and error messages`() = runTest {
         // Given
         coEvery { mockGlossaryDao.getByProjectId("default_project") } returns emptyList()
-        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage)
+        viewModel = GlossaryViewModel(mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, mockSecureStorage, mockExtractionJobDao, mockContext).also { it.useService = false }
         advanceUntilIdle()
 
         // Simulate a success message

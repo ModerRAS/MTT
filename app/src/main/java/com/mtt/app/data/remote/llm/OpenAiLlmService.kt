@@ -26,7 +26,8 @@ class OpenAiLlmService(
                 systemPrompt = config.systemPrompt,
                 model = config.model.modelId,
                 temperature = config.temperature,
-                maxTokens = config.maxTokens
+                maxTokens = config.maxTokens,
+                toolChoice = config.toolChoice
             )
         }
     }

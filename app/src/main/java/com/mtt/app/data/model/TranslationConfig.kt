@@ -20,7 +20,7 @@ data class TranslationConfig(
     val targetLang: String,
     val glossaryEntries: List<GlossaryEntryEntity> = emptyList(),
     val temperature: Float = 0.3f,
-    val maxTokens: Int = 4096,
+    val maxTokens: Int = 16384,
     val batchSize: Int = 50,
     val concurrency: Int = 1
 )

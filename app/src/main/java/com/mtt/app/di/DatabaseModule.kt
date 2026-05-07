@@ -3,9 +3,12 @@ package com.mtt.app.di
 import android.content.Context
 import androidx.room.Room
 import com.mtt.app.data.local.AppDatabase
+import com.mtt.app.data.local.Migration
 import com.mtt.app.data.local.dao.CacheItemDao
+import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.GlossaryDao
 import com.mtt.app.data.local.dao.ProjectDao
+import com.mtt.app.data.local.dao.TranslationJobDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -31,6 +34,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
+            .addMigrations(*Migration.ALL_MIGRATIONS.toTypedArray())
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -51,5 +55,17 @@ object DatabaseModule {
     @Singleton
     fun provideGlossaryDao(database: AppDatabase): GlossaryDao {
         return database.glossaryDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideTranslationJobDao(database: AppDatabase): TranslationJobDao {
+        return database.translationJobDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideExtractionJobDao(database: AppDatabase): ExtractionJobDao {
+        return database.extractionJobDao()
     }
 }

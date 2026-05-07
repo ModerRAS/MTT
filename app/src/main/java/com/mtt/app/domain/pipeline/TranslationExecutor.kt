@@ -3,6 +3,7 @@ package com.mtt.app.domain.pipeline
 import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.error.TranslationException
+import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.llm.RateLimitException
 import com.mtt.app.data.llm.RateLimiter
 import com.mtt.app.data.llm.TokenEstimator
@@ -10,6 +11,7 @@ import com.mtt.app.data.model.GlossaryEntryEntity
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationMode
+import com.mtt.app.data.model.TranslationResponse
 import com.mtt.app.data.model.LlmProvider
 import com.mtt.app.data.remote.anthropic.AnthropicClient
 import com.mtt.app.data.remote.llm.LlmService
@@ -43,6 +45,9 @@ class TranslationExecutor @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val rateLimiter: RateLimiter
 ) {
+    companion object {
+        private const val TAG = "TranslationExecutor"
+    }
 
     // ──────────────────────────────────────────────
     //  LLM service management
@@ -153,19 +158,8 @@ class TranslationExecutor @Inject constructor(
                 // Collect results in group order (chunked order = original order)
                 for (deferred in deferreds) {
                     val (chunk, chunkResult) = deferred.await()
-                    when (chunkResult.outcome) {
-                        ChunkOutcome.Success -> {
-                            allItems.addAll(chunkResult.items)
-                            totalTokens += chunkResult.tokensUsed
-                        }
-                        is ChunkOutcome.Invalid -> {
-                            // Best effort: accept partial even if validation failed.
-                            // With upfront chunking by batchSize, oversized chunks
-                            // are avoided, so retry splitting is rarely needed.
-                            allItems.addAll(chunkResult.items)
-                            totalTokens += chunkResult.tokensUsed
-                        }
-                    }
+                    allItems.addAll(chunkResult.items)
+                    totalTokens += chunkResult.tokensUsed
                     completedSize += chunk.size
                     emitProgress(
                         BatchResult.Progress(
@@ -246,6 +240,30 @@ class TranslationExecutor @Inject constructor(
             )
         }
 
+        // 1b. Filter out items that need no translation — pure numbers, EV codes, etc.
+        val passthroughPatterns = listOf(
+            Regex("""^\d+$"""),                      // pure digits: "0", "123"
+            Regex("""^EV\d+$""", RegexOption.IGNORE_CASE)  // EV codes: "EV001", "ev074"
+        )
+        val numericPositions = mutableSetOf<Int>()
+        val llmNonEmptyItems = mutableListOf<Pair<Int, String>>()
+        for ((pos, item) in nonEmptyItems.withIndex()) {
+            val trimmed = item.second.trim()
+            val shouldSkip = trimmed.toDoubleOrNull() != null ||
+                passthroughPatterns.any { it.matches(trimmed) }
+            if (shouldSkip) {
+                numericPositions.add(pos)
+                AppLogger.d(TAG, "Passthrough segment #${item.first}: \"${item.second}\"")
+            } else {
+                llmNonEmptyItems.add(item)
+            }
+        }
+
+        if (llmNonEmptyItems.isEmpty()) {
+            AppLogger.d(TAG, "All ${chunk.size} items in chunk are passthrough, skip LLM call")
+            return ChunkResult(items = chunk, tokensUsed = 0, outcome = ChunkOutcome.Success)
+        }
+
         // 2. Convert GlossaryEntryEntity -> GlossaryEntry
         val glossaryEntries = config.glossaryEntries.map { entity ->
             GlossaryEntry(
@@ -261,13 +279,13 @@ class TranslationExecutor @Inject constructor(
             GlossaryEngine.buildProhibitionSection(glossaryEntries)
         } else ""
 
-        // 3. Build prompt
+        // 3. Build prompt (exclude numeric items — they get passthrough)
         val prompt = buildPrompt(
-            nonEmptyItems, config, glossarySection, prohibitionSection, ""
+            llmNonEmptyItems, config, glossarySection, prohibitionSection, ""
         )
 
         // 4a. Token estimation
-        val segmentTexts = nonEmptyItems.map { it.second }
+        val segmentTexts = llmNonEmptyItems.map { it.second }
         val estimatedTokens = TokenEstimator.estimateBatch(
             segmentTexts, prompt.systemPrompt, "\n1. "
         )
@@ -275,11 +293,9 @@ class TranslationExecutor @Inject constructor(
         // 4b. Context window check
         if (!TokenEstimator.canFitInContext(estimatedTokens, config.model)) {
             return ChunkResult(
-                items = emptyList(),
+                items = chunk,  // passthrough original on failure
                 tokensUsed = 0,
-                outcome = ChunkOutcome.Invalid(
-                    "Batch too large (${estimatedTokens} tokens > 90% of ${config.model.contextWindow})"
-                )
+                outcome = ChunkOutcome.Success
             )
         }
 
@@ -288,75 +304,191 @@ class TranslationExecutor @Inject constructor(
             rateLimiter.acquire(estimatedTokens)
         } catch (e: RateLimitException) {
             return ChunkResult(
-                items = emptyList(),
+                items = chunk,  // passthrough original on failure
                 tokensUsed = 0,
-                outcome = ChunkOutcome.Invalid("Rate limit: ${e.message}")
+                outcome = ChunkOutcome.Success
             )
         }
 
-        // 6. LLM call
-        val response = try {
-            val llmConfig = LlmRequestConfig(
-                messages = listOf(LlmRequestConfig.Message("user", prompt.userMessage)),
-                systemPrompt = prompt.systemPrompt,
-                model = config.model,
-                temperature = config.temperature,
-                maxTokens = config.maxTokens
-            )
-            currentLlmService!!.translate(llmConfig)
-        } catch (e: ApiException) {
-            return ChunkResult(
-                items = emptyList(),
-                tokensUsed = 0,
-                outcome = ChunkOutcome.Invalid("API error (${e.code}): ${e.message}")
-            )
-        } catch (e: NetworkException) {
-            return ChunkResult(
-                items = emptyList(),
-                tokensUsed = 0,
-                outcome = ChunkOutcome.Invalid("Network error: ${e.message}")
-            )
+        // ── Tool calling + agent loop ──────────────────────────
+        // Uses LLM tool calling (output_translations: {source, translated} pairs)
+        // instead of raw text parsing. If some items are not covered, loops back
+        // with remaining items (agent loop).
+
+        // Map: nonEmptyItems position → translation text
+        val resultMap = mutableMapOf<Int, String>()
+        // Fill numeric passthroughs
+        for (pos in numericPositions) {
+            resultMap[pos] = nonEmptyItems[pos].second
         }
 
-        // 7. Validate raw response
-        val validation = ResponseChecker.validateResponse(
-            response.content,
-            nonEmptyItems.size
-        )
+        // Remaining non-numeric positions in nonEmptyItems
+        val remainingPositions = mutableListOf<Int>()
+        for (pos in nonEmptyItems.indices) {
+            if (pos !in numericPositions) remainingPositions.add(pos)
+        }
 
-        if (validation != ValidationResult.Valid) {
-            return ChunkResult(
-                items = emptyList(),
-                tokensUsed = response.tokensUsed,
-                outcome = ChunkOutcome.Invalid(
-                    "Response validation failed: $validation"
+        var totalTokens = 0
+        var iteration = 0
+        val MAX_ITERATIONS = 5
+
+        while (remainingPositions.isNotEmpty() && iteration < MAX_ITERATIONS) {
+            iteration++
+
+            // Build prompt for remaining items
+            val remainingItems = remainingPositions.map { pos ->
+                nonEmptyItems[pos].first to nonEmptyItems[pos].second
+            }
+            val retryPrompt = buildPrompt(
+                remainingItems, config, glossarySection, prohibitionSection, ""
+            )
+
+            // Call LLM with tool choice
+            val response = try {
+                val llmConfig = LlmRequestConfig(
+                    messages = listOf(LlmRequestConfig.Message("user", retryPrompt.userMessage)),
+                    systemPrompt = retryPrompt.systemPrompt,
+                    model = config.model,
+                    temperature = config.temperature,
+                    maxTokens = config.maxTokens,
+                    toolChoice = "output_translations"
                 )
-            )
-        }
+                currentLlmService!!.translate(llmConfig)
+            } catch (e: ApiException) {
+                AppLogger.w(TAG, "API error iteration $iteration (passthrough ${remainingPositions.size} items): ${e.message}")
+                for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
+                remainingPositions.clear()
+                break
+            } catch (e: NetworkException) {
+                AppLogger.w(TAG, "Network error iteration $iteration (passthrough ${remainingPositions.size} items): ${e.message}")
+                for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
+                remainingPositions.clear()
+                break
+            }
+            totalTokens += response.tokensUsed
+            AppLogger.i(TAG, "LLM response iteration $iteration: ${response.content.length} chars, ${response.tokensUsed} tokens, model=${response.model}")
 
-        // 8. Extract translations
-        val extractionResult = ResponseExtractor.parse(response.content)
-        val extractedSegments = when (extractionResult) {
-            is ExtractionResult.Success -> extractionResult.translations
-            is ExtractionResult.Error -> {
-                return ChunkResult(
-                    items = emptyList(),
-                    tokensUsed = response.tokensUsed,
-                    outcome = ChunkOutcome.Invalid(
-                        "Response extraction failed: ${extractionResult.message}"
-                    )
-                )
+            // Tool call result: {source, translated} pairs
+            // Tool call already pairs each translation to its source — use positionally.
+            // Model returns results in the same order as input items.
+            if (response.translationPairs != null) {
+                val count = minOf(response.translationPairs.size, remainingPositions.size)
+                val toKeep = remainingPositions.drop(count)
+                for (i in 0 until count) {
+                    resultMap[remainingPositions[i]] = response.translationPairs[i].translated
+                }
+                remainingPositions.clear()
+                remainingPositions.addAll(toKeep)
+                AppLogger.d(TAG, "Tool call iteration $iteration: +$count matched, ${remainingPositions.size} remaining")
+
+                if (count == 0) {
+                    AppLogger.w(TAG, "Tool call made no progress, passthrough ${remainingPositions.size} items")
+                    for (pos in remainingPositions) resultMap[pos] = nonEmptyItems[pos].second
+                    remainingPositions.clear()
+                }
+            }
+            // Fallback: flat translations array — match by position order
+            else if (response.translations != null && response.translations.isNotEmpty()) {
+                val count = minOf(response.translations.size, remainingPositions.size)
+                for (i in 0 until count) {
+                    resultMap[remainingPositions[i]] = response.translations[i]
+                }
+                if (count < remainingPositions.size) {
+                    // Partial flat result — passthrough the rest
+                    for (i in count until remainingPositions.size) {
+                        resultMap[remainingPositions[i]] = nonEmptyItems[remainingPositions[i]].second
+                    }
+                }
+                remainingPositions.clear()
+                AppLogger.d(TAG, "Flat translation: $count items")
+            }
+            // No structured output — fall through to old flow
+            else {
+                AppLogger.w(TAG, "No tool call result, falling back to text parsing")
+                processSingleChunkTextFallback(response, resultMap, remainingPositions, nonEmptyItems, config)
+                remainingPositions.clear()
             }
         }
 
-        // 9. Rejoin per original text using postprocess
-        val translatedItems = rebuildTexts(textSegmentsList, extractedSegments)
+        // Build merged segments in order
+        val mergedSegments = nonEmptyItems.indices.map {
+            resultMap[it] ?: nonEmptyItems[it].second
+        }
+        AppLogger.i(TAG, "Agent loop done: ${nonEmptyItems.size} segments, " +
+            "${numericPositions.size} numeric passthrough, $totalTokens tokens over $iteration iteration(s), " +
+            "${if (remainingPositions.isEmpty()) "all covered" else "${remainingPositions.size} passthrough"}")
+
+        // 10. Rejoin per original text using postprocess
+        val translatedItems = rebuildTexts(textSegmentsList, mergedSegments)
 
         return ChunkResult(
             items = translatedItems,
-            tokensUsed = response.tokensUsed,
+            tokensUsed = totalTokens,
             outcome = ChunkOutcome.Success
         )
+    }
+
+    /**
+     * Fallback: validates raw text response, extracts translations via
+     * [ResponseExtractor], and fills [resultMap] for the remaining positions.
+     *
+     * Used when the LLM does not return a tool call (e.g., model doesn't
+     * support tool calling, or the response format is unexpected).
+     */
+    private fun processSingleChunkTextFallback(
+        response: TranslationResponse,
+        resultMap: MutableMap<Int, String>,
+        remainingPositions: MutableList<Int>,
+        nonEmptyItems: List<Pair<Int, String>>,
+        config: TranslationConfig
+    ) {
+        // Validate raw response
+        val validation = ResponseChecker.validateResponse(
+            response.content,
+            remainingPositions.size
+        )
+        val validationLabel = when (validation) {
+            is ValidationResult.Valid -> "Valid"
+            is ValidationResult.TooFew -> "TooFew"
+            is ValidationResult.TooMany -> "TooMany"
+            is ValidationResult.Refused -> "Refused"
+            is ValidationResult.WrongLanguage -> "WrongLanguage"
+        }
+        AppLogger.d(TAG, "Text fallback validation: $validationLabel (expected ${remainingPositions.size} items)")
+        AppLogger.d(TAG, "Response preview: ${response.content.take(200).replace("\n", "\\n")}")
+
+        if (validation != ValidationResult.Valid) {
+            for (pos in remainingPositions) {
+                resultMap[pos] = nonEmptyItems[pos].second
+            }
+            return
+        }
+
+        // Extract translations
+        val extractionResult = ResponseExtractor.parse(response.content)
+        val extractedSegments = when (extractionResult) {
+            is ExtractionResult.Success -> {
+                AppLogger.d(TAG, "Extraction success: ${extractionResult.translations.size}/${remainingPositions.size} items")
+                extractionResult.translations
+            }
+            is ExtractionResult.Error -> {
+                AppLogger.w(TAG, "Extraction failed (passthrough): ${extractionResult.message}")
+                for (pos in remainingPositions) {
+                    resultMap[pos] = nonEmptyItems[pos].second
+                }
+                return
+            }
+        }
+
+        // Match by position order
+        val count = minOf(extractedSegments.size, remainingPositions.size)
+        for (i in 0 until count) {
+            resultMap[remainingPositions[i]] = extractedSegments[i]
+        }
+        // Passthrough any surplus
+        for (i in count until remainingPositions.size) {
+            resultMap[remainingPositions[i]] = nonEmptyItems[remainingPositions[i]].second
+        }
     }
 
     // ──────────────────────────────────────────────

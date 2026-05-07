@@ -123,6 +123,8 @@ fun TranslationScreen(
     val isTranslating = uiState is TranslationUiState.Translating
     val isPaused = uiState is TranslationUiState.Idle && progress.completedItems > 0
     val isCompleted = uiState is TranslationUiState.Completed
+    val isResumable = uiState is TranslationUiState.Resumable
+    val resumableJob = (uiState as? TranslationUiState.Resumable)
 
     val context = LocalContext.current
 
@@ -152,6 +154,8 @@ fun TranslationScreen(
             isTranslating = isTranslating,
             isPaused = isPaused,
             isCompleted = isCompleted,
+            isResumable = isResumable,
+            resumableJob = resumableJob,
             isExtracting = isExtracting,
             extractionProgress = extractionProgress,
             sourceLang = viewModel.sourceLang,
@@ -165,7 +169,9 @@ fun TranslationScreen(
             onResumeClick = viewModel::onResumeTranslation,
             onExportClick = { exportLauncher.launch("translated.txt") },
             onExtractTermsClick = viewModel::extractTerms,
-            onNavigateToSettings = onNavigateToSettings
+            onNavigateToSettings = onNavigateToSettings,
+            onResumeJobClick = { jobId -> viewModel.resumeFromJob(jobId) },
+            onDismissResumeClick = viewModel::dismissResumable
         )
 
         SnackbarHost(
@@ -197,6 +203,8 @@ private fun TranslationScreenContent(
     isTranslating: Boolean,
     isPaused: Boolean,
     isCompleted: Boolean,
+    isResumable: Boolean = false,
+    resumableJob: TranslationUiState.Resumable? = null,
     isExtracting: Boolean = false,
     extractionProgress: ExtractionProgress = ExtractionProgress(0, 0),
     sourceLang: String,
@@ -210,7 +218,9 @@ private fun TranslationScreenContent(
     onResumeClick: () -> Unit,
     onExportClick: () -> Unit,
     onExtractTermsClick: () -> Unit = {},
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onResumeJobClick: (String) -> Unit = {},
+    onDismissResumeClick: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
     val languages = listOf("日语", "英语", "韩语", "中文", "自动检测")
@@ -486,6 +496,51 @@ private fun TranslationScreenContent(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
+                    }
+                }
+            }
+
+            // Resume incomplete job card
+            if (isResumable && resumableJob != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "发现未完成的翻译任务",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Text(
+                            text = "文件: ${resumableJob.sourceFileName ?: "未知"}\n" +
+                                    "进度: ${resumableJob.completedItems}/${resumableJob.totalItems}" +
+                                    " (${if (resumableJob.totalItems > 0) (resumableJob.completedItems * 100 / resumableJob.totalItems) else 0}%)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onResumeJobClick(resumableJob.jobId) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("继续翻译")
+                            }
+                            OutlinedButton(
+                                onClick = onDismissResumeClick,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("重新开始")
+                            }
+                        }
                     }
                 }
             }

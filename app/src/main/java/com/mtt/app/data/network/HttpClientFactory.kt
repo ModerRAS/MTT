@@ -22,7 +22,7 @@ object HttpClientFactory {
 
     // Timeout configuration
     const val CONNECT_TIMEOUT_SECONDS = 15L
-    const val READ_TIMEOUT_SECONDS = 60L
+    const val READ_TIMEOUT_SECONDS = 300L
     const val WRITE_TIMEOUT_SECONDS = 30L
 
     // Retry configuration

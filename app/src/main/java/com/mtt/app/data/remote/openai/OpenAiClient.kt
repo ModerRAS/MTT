@@ -4,20 +4,25 @@ import com.mtt.app.core.error.ApiException
 import com.mtt.app.core.error.NetworkException
 import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.model.LlmRequestConfig
+import com.mtt.app.data.model.TranslationPair
 import com.mtt.app.data.model.TranslationResponse
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.IOException
+import java.io.InputStreamReader
 
 /**
  * OpenAI API client for translation using the official openai-java SDK.
  *
- * Uses the Chat Completions API with system message as first message
- * (following the pattern from AiNiee OpenaiRequester.py).
+ * Uses streaming Chat Completions API (stream=true) to avoid read timeouts
+ * on slow servers — tokens arrive incrementally as they are generated.
  *
  * @param okHttpClient Base OkHttpClient from HttpClientFactory (auth headers included)
  * @param apiKey OpenAI API key
@@ -29,11 +34,11 @@ class OpenAiClient(
     private val baseUrl: String = "https://api.openai.com/v1"
 ) {
     /**
-     * Translate text using the OpenAI-compatible Chat Completions API (non-streaming).
+     * Translate text using streaming Chat Completions API.
      *
-     * Uses our OkHttpClient directly so that LoggingInterceptor, RetryInterceptor,
-     * and custom timeouts are applied. Bypasses the OpenAI Java SDK which creates
-     * its own internal HTTP client ignoring our configuration.
+     * Uses SSE (Server-Sent Events) to receive tokens incrementally.
+     * This avoids read timeouts on slow servers since data keeps flowing
+     * as the model generates each token.
      *
      * @param messages User messages to translate
      * @param systemPrompt System prompt for translation instructions
@@ -42,54 +47,52 @@ class OpenAiClient(
      * @throws ApiException on API errors (401, 429, 5xx)
      * @throws NetworkException on connectivity errors
      */
+    /**
+     * Translate text using streaming Chat Completions API.
+     *
+     * When [toolChoice] is non-null, adds a tool definition (`type: "function"`) and
+     * forces the model to call `output_translations(translations: string[])` instead
+     * of generating free-text. This avoids `<textarea>` parsing issues with reasoning
+     * models — the translations arrive as structured JSON in the tool call arguments.
+     *
+     * @param toolChoice Function name to force as tool_choice, or null for normal text mode.
+     */
     @Throws(ApiException::class, NetworkException::class)
     fun translate(
         messages: List<LlmRequestConfig.Message>,
         systemPrompt: String,
         model: String,
         temperature: Float? = null,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        toolChoice: String? = null
     ): TranslationResponse {
         try {
-            val jsonBody = buildJsonBody(messages, systemPrompt, model, temperature, maxTokens)
+            val jsonBody = buildJsonBody(
+                messages, systemPrompt, model, temperature, maxTokens,
+                stream = true, toolChoice = toolChoice
+            )
             val normalizedBaseUrl = normalizeApiUrl(baseUrl)
             val url = "$normalizedBaseUrl/chat/completions"
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $apiKey")
                 .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
-            val body = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                throw ApiException(response.code, body.ifEmpty { "HTTP ${response.code}" })
+                val errBody = response.body?.string() ?: ""
+                throw ApiException(response.code, errBody.ifEmpty { "HTTP ${response.code}" })
             }
 
-            val json = JSONObject(body)
-            val choices = json.optJSONArray("choices")
-            val content = if (choices != null && choices.length() > 0) {
-                choices.getJSONObject(0)
-                    .optJSONObject("message")
-                    ?.optString("content", "") ?: ""
-            } else ""
-
-            val usage = json.optJSONObject("usage")
-            val tokensUsed = if (usage != null) {
-                usage.optInt("prompt_tokens", 0) + usage.optInt("completion_tokens", 0)
-            } else 0
-
-            return TranslationResponse(
-                content = content,
-                model = model,
-                tokensUsed = tokensUsed
-            )
+            // Parse SSE stream
+            return parseSseStream(response, model, toolChoice != null)
         } catch (e: IOException) {
             AppLogger.e(TAG, "OpenAI translate IOException: ${e.message}", e)
             throw NetworkException("网络连接失败，请检查网络: ${e.message}")
         } catch (e: ApiException) {
-            // ApiException from non-successful HTTP response — re-map using code + body
             AppLogger.e(TAG, "OpenAI translate HTTP error: ${e.code}: ${e.message}", e)
             throw mapApiError(e)
         } catch (e: Exception) {
@@ -99,35 +102,177 @@ class OpenAiClient(
     }
 
     /**
+     * Parse an SSE (Server-Sent Events) stream from the Chat Completions API.
+     *
+     * Supports two modes:
+     * 1. **Text mode** ([isToolCall]=false): accumulates `delta.content` — the normal response text.
+     * 2. **Tool call mode** ([isToolCall]=true): accumulates `delta.tool_calls[].function.arguments`
+     *    JSON, then parses it to extract the translations array.
+     *
+     * SSE format (text mode):
+     *   data: {"choices":[{"delta":{"content":"..."}}]}
+     *   data: {"choices":[{"delta":{"content":"..."}}]}
+     *   data: [DONE]
+     *
+     * SSE format (tool call mode):
+     *   data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"..."}}]}}]}
+     *   data: [DONE]
+     *
+     * @param response   OkHttp Response with a streaming body
+     * @param model      Model name for the TranslationResponse
+     * @param isToolCall If true, parse tool call arguments instead of content
+     * @return TranslationResponse with content or structured translations
+     */
+    private fun parseSseStream(response: Response, model: String, isToolCall: Boolean = false): TranslationResponse {
+        val body = response.body ?: throw NetworkException("响应体为空")
+        val reader = BufferedReader(InputStreamReader(body.byteStream(), Charsets.UTF_8))
+        val contentBuilder = StringBuilder()
+        val toolCallArgsBuilder = StringBuilder()
+        var tokensUsed = 0
+
+        try {
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val l = line ?: continue
+                if (!l.startsWith("data: ")) continue
+
+                val data = l.removePrefix("data: ").trim()
+                if (data == "[DONE]") break
+
+                try {
+                    val json = JSONObject(data)
+                    val choices = json.optJSONArray("choices")
+                    if (choices != null && choices.length() > 0) {
+                        val delta = choices.getJSONObject(0).optJSONObject("delta")
+                        if (delta != null) {
+                            if (isToolCall) {
+                                // Accumulate tool call arguments
+                                val toolCalls = delta.optJSONArray("tool_calls")
+                                if (toolCalls != null) {
+                                    for (i in 0 until toolCalls.length()) {
+                                        val tc = toolCalls.getJSONObject(i)
+                                        val func = tc.optJSONObject("function")
+                                        if (func != null) {
+                                            toolCallArgsBuilder.append(func.optString("arguments", ""))
+                                        }
+                                    }
+                                }
+                            } else {
+                                val content = delta.optString("content", "")
+                                contentBuilder.append(content)
+                            }
+                        }
+                    }
+
+                    // Token usage may appear in the final chunk
+                    val usage = json.optJSONObject("usage")
+                    if (usage != null) {
+                        tokensUsed = usage.optInt("total_tokens", 0)
+                    }
+                } catch (_: Exception) {
+                    // Skip malformed JSON lines
+                }
+            }
+        } finally {
+            reader.close()
+            body.close()
+        }
+
+        // If tool call mode, parse accumulated arguments JSON
+        if (isToolCall && toolCallArgsBuilder.isNotEmpty()) {
+            val argsJson = toolCallArgsBuilder.toString()
+            AppLogger.d(TAG, "SSE tool call args: ${argsJson.take(200)} (${argsJson.length} chars)")
+            try {
+                val argsObj = JSONObject(argsJson)
+                val translationsArray = argsObj.optJSONArray("translations")
+                if (translationsArray != null) {
+                    // Try object array mode: [{source, translated}, ...]
+                    val pairs = mutableListOf<TranslationPair>()
+                    val flatTranslations = mutableListOf<String>()
+                    var isObjectMode = false
+
+                    for (i in 0 until translationsArray.length()) {
+                        val item = translationsArray.get(i)
+                        if (item is JSONObject) {
+                            isObjectMode = true
+                            val source = item.optString("source", "")
+                            val translated = item.optString("translated", "")
+                            pairs.add(TranslationPair(source = source, translated = translated))
+                            flatTranslations.add(translated)
+                        } else if (item is String) {
+                            flatTranslations.add(item)
+                        }
+                    }
+
+                    if (isObjectMode) {
+                        AppLogger.d(TAG, "SSE tool call complete: ${pairs.size} pairs, $tokensUsed tokens")
+                        return TranslationResponse(
+                            content = argsJson,
+                            model = model,
+                            tokensUsed = tokensUsed,
+                            translations = flatTranslations,
+                            translationPairs = pairs
+                        )
+                    } else {
+                        AppLogger.d(TAG, "SSE tool call complete: ${flatTranslations.size} items, $tokensUsed tokens")
+                        return TranslationResponse(
+                            content = argsJson,
+                            model = model,
+                            tokensUsed = tokensUsed,
+                            translations = flatTranslations
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Failed to parse tool call args JSON: ${e.message}")
+            }
+            // Fall through to return as content if JSON parsing fails
+        }
+
+        AppLogger.d(TAG, "SSE stream complete: ${contentBuilder.length} chars, $tokensUsed tokens")
+
+        return TranslationResponse(
+            content = contentBuilder.toString(),
+            model = model,
+            tokensUsed = tokensUsed
+        )
+    }
+
+    /**
      * Build a JSON request body for the chat completions API.
-     * Format: {"model":"...","messages":[{"role":"system","content":"..."},...]}
+     *
+     * When [toolChoice] is non-null, adds a `tools` array with a single
+     * `output_translations` function tool and sets `tool_choice` to force
+     * the model to use it. The tool accepts a JSON array of translated strings.
+     *
+     * When [stream] is true, the API returns tokens incrementally via SSE.
      */
     private fun buildJsonBody(
         messages: List<LlmRequestConfig.Message>,
         systemPrompt: String,
         model: String,
         temperature: Float? = null,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        stream: Boolean = false,
+        toolChoice: String? = null
     ): String {
         val root = JSONObject()
         root.put("model", model)
 
-        // Optional parameters for deterministic output and cost control
         if (temperature != null) {
             root.put("temperature", temperature.toDouble())
         }
         if (maxTokens != null) {
             root.put("max_tokens", maxTokens)
         }
+        root.put("stream", stream)
 
         val msgs = JSONArray()
-        // System message first (matches AiNiee pattern)
         val sysMsg = JSONObject()
         sysMsg.put("role", "system")
         sysMsg.put("content", systemPrompt)
         msgs.put(sysMsg)
 
-        // User messages
         for (msg in messages) {
             val userMsg = JSONObject()
             userMsg.put("role", msg.role)
@@ -136,6 +281,58 @@ class OpenAiClient(
         }
 
         root.put("messages", msgs)
+
+        // Tool calling mode
+        if (toolChoice != null) {
+            val tools = JSONArray()
+            val toolObj = JSONObject()
+            toolObj.put("type", "function")
+
+            val func = JSONObject()
+            func.put("name", "output_translations")
+            func.put("description", "Output the translated texts in the same order as the input items")
+
+            val params = JSONObject()
+            params.put("type", "object")
+
+            val props = JSONObject()
+            val translations = JSONObject()
+            translations.put("type", "array")
+            translations.put("description", "Translated results, each item pairs source text with its translation")
+
+            val itemSchema = JSONObject()
+            itemSchema.put("type", "object")
+            val itemProps = JSONObject()
+
+            val sourceProp = JSONObject()
+            sourceProp.put("type", "string")
+            sourceProp.put("description", "Original source text (without numbering prefix, just the raw text)")
+            itemProps.put("source", sourceProp)
+
+            val translatedProp = JSONObject()
+            translatedProp.put("type", "string")
+            translatedProp.put("description", "Translated text in the target language")
+            itemProps.put("translated", translatedProp)
+
+            itemSchema.put("properties", itemProps)
+            itemSchema.put("required", JSONArray(listOf("source", "translated")))
+            translations.put("items", itemSchema)
+
+            props.put("translations", translations)
+            params.put("properties", props)
+            params.put("required", JSONArray(listOf("translations")))
+            func.put("parameters", params)
+
+            toolObj.put("function", func)
+            tools.put(toolObj)
+            root.put("tools", tools)
+
+            val choice = JSONObject()
+            choice.put("type", "function")
+            choice.put("function", JSONObject().apply { put("name", toolChoice) })
+            root.put("tool_choice", choice)
+        }
+
         return root.toString()
     }
 

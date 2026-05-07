@@ -132,20 +132,18 @@ object PromptBuilder {
         val sb = StringBuilder()
         sb.appendLine("你是专业翻译，专注将${sourceLang}文本翻译为${targetLang}。")
         sb.appendLine("严格遵循以下规则：")
-        sb.appendLine("1. 只翻译<textarea>中的内容，不要添加任何解释")
-        sb.appendLine("2. 严格按照序号输出，每行一个翻译结果")
+        sb.appendLine("1. 调用 output_translations 工具输出翻译结果")
+        sb.appendLine("2. 每个条目必须包含原文(source)和译文(translated)")
         sb.appendLine("3. 使用Glossary中的术语翻译，保持一致性")
         sb.appendLine("4. 禁止翻译DoNotTranslate列表中的词汇，保持原文")
         sb.appendLine("5. 保持原文的语气、风格和格式")
+        sb.appendLine("6. 一次性输出全部条目的翻译，不要遗漏")
 
         appendOptionalPromptSection(sb, glossary)
         appendOptionalPromptSection(sb, prohibition)
 
         sb.appendLine()
-        sb.appendLine("###以textarea标签输出译文")
-        sb.appendLine("<textarea>")
-        sb.appendLine("1.译文文本")
-        sb.append("</textarea>")
+        sb.appendLine("在 output_translations 工具中输出结果")
         return sb.toString()
     }
 

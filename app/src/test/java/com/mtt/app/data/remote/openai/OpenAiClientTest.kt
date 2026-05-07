@@ -54,13 +54,11 @@ class OpenAiClientTest {
 
     @Test
     fun `translate success returns TranslationResponse`() {
-        val jsonBody = """{
-            "id":"test-id",
-            "object":"chat.completion",
-            "choices":[{"index":0,"message":{"role":"assistant","content":"Hola, mundo!"},"finish_reason":"stop"}],
-            "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
-        }"""
-        val client = buildClientWithResponse(200, jsonBody)
+        val deltaBody1 = """{"choices":[{"index":0,"delta":{"content":"Hola,"},"finish_reason":null}]}"""
+        val deltaBody2 = """{"choices":[{"index":0,"delta":{"content":" mundo!"},"finish_reason":null}]}"""
+        val usageBody = """{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"""
+        val sseBody = "data: $deltaBody1\n\ndata: $deltaBody2\n\ndata: $usageBody\n\ndata: [DONE]\n\n"
+        val client = buildClientWithResponse(200, sseBody)
         val result = client.translate(MESSAGES, SYSTEM_PROMPT, TEST_MODEL)
         assertEquals("Hola, mundo!", result.content)
         assertEquals(TEST_MODEL, result.model)

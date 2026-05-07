@@ -3,8 +3,11 @@ package com.mtt.app.ui.translation
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.io.SourceTextRepository
+import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.GlossaryDao
+import com.mtt.app.data.local.dao.TranslationJobDao
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.data.model.TranslationProgress
@@ -65,6 +68,9 @@ class TranslationViewModelTest {
     private val mockGlossaryDao: GlossaryDao = mockk(relaxed = true)
     private val mockSourceTextRepository: SourceTextRepository = mockk(relaxed = true)
     private val mockExtractTermsUseCase: ExtractTermsUseCase = mockk(relaxed = true)
+    private val mockTranslationJobDao: TranslationJobDao = mockk(relaxed = true)
+    private val mockExtractionJobDao: ExtractionJobDao = mockk(relaxed = true)
+    private val mockCacheManager: CacheManager = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     init {
@@ -84,8 +90,13 @@ class TranslationViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = TranslationViewModel(useCase, secureStorage, mockGlossaryDao, mockSourceTextRepository, mockExtractTermsUseCase, context)
+        viewModel = TranslationViewModel(
+            useCase, secureStorage, mockGlossaryDao, mockSourceTextRepository,
+            mockExtractTermsUseCase, mockTranslationJobDao, mockExtractionJobDao,
+            mockCacheManager, context
+        )
         viewModel.ioDispatcher = testDispatcher
+        viewModel.useService = false  // Run pipeline directly in tests
     }
 
     @After

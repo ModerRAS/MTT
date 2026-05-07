@@ -148,8 +148,9 @@ class PromptBuilderTest {
         )
 
         assertTrue(result.contains("翻译"))
-        assertTrue(result.contains("textarea"))
-        assertTrue(result.contains("序号"))
+        assertTrue(result.contains("output_translations"))
+        assertTrue(result.contains("source"))
+        assertTrue(result.contains("translated"))
         assertTrue(result.contains("Glossary"))
         assertTrue(result.contains("DoNotTranslate"))
     }

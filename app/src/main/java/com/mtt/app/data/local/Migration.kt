@@ -9,17 +9,46 @@ import androidx.room.migration.Migration
 object Migration {
     /**
      * Migration from version 1 to 2.
-     * Currently a no-op fallback for future schema changes.
-     * 
-     * Add actual migration logic when schema changes are needed:
-     * - ALTER TABLE statements
-     * - Data migration scripts
-     * - Index creation/deletion
+     *
+     * Adds two new tables for job tracking:
+     * - translation_jobs: tracks translation execution state
+     * - extraction_jobs: tracks glossary extraction state
      */
     val MIGRATION_1_2: Migration = object : Migration(1, 2) {
         override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-            // No-op for now - schema unchanged
-            // Add migration logic here when upgrading from v1 to v2
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `translation_jobs` (
+                    `job_id` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `total_items` INTEGER NOT NULL,
+                    `completed_items` INTEGER NOT NULL,
+                    `source_file_uri` TEXT NOT NULL,
+                    `source_file_name` TEXT,
+                    `config_json` TEXT NOT NULL,
+                    `source_texts_json` TEXT,
+                    `source_text_map_json` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`job_id`)
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `extraction_jobs` (
+                    `job_id` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `total_chunks` INTEGER NOT NULL,
+                    `completed_chunks` INTEGER NOT NULL,
+                    `source_lang` TEXT NOT NULL,
+                    `source_texts_json` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`job_id`)
+                )
+                """.trimIndent()
+            )
         }
     }
 

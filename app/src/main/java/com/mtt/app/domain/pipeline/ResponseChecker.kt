@@ -31,6 +31,31 @@ package com.mtt.app.domain.pipeline
  */
 object ResponseChecker {
 
+    private const val THINK_OPEN = "<think>"
+    private const val THINK_CLOSE = "</think>"
+
+    /**
+     * Strips `<think>...</think>` blocks from the raw response.
+     *
+     * Some reasoning models (DeepSeek-R1, QwQ, MiniMax) wrap chain-of-thought
+     * in `<think>` tags. This content must be removed before validating format,
+     * otherwise numbered lines inside think blocks can interfere with count checks.
+     */
+    private fun stripThinkTags(raw: String): String {
+        val sb = StringBuilder(raw)
+        var start = sb.indexOf(THINK_OPEN, ignoreCase = true)
+        while (start != -1) {
+            val end = sb.indexOf(THINK_CLOSE, start + THINK_OPEN.length, ignoreCase = true)
+            if (end == -1) {
+                sb.delete(start, sb.length)
+                break
+            }
+            sb.delete(start, end + THINK_CLOSE.length)
+            start = sb.indexOf(THINK_OPEN, ignoreCase = true)
+        }
+        return sb.toString()
+    }
+
     // ──────────────────────────────────────────────
     //  Public API
     // ──────────────────────────────────────────────
@@ -152,23 +177,36 @@ object ResponseChecker {
      * Extracts content between the first `<textarea>` and `</textarea>` tags
      * (case‑insensitive). Returns the full [response] if no opening tag is found.
      */
+    /**
+     * Extracts content between the first `<textarea>` and `</textarea>` tags
+     * (case‑insensitive), after first stripping `<think>` reasoning blocks.
+     *
+     * Reasoning models may wrap chain-of-thought in `<think>` tags; stripping
+     * them first prevents think content from being counted as translations
+     * when no `<textarea>` fallback is used.
+     *
+     * Returns the full cleaned response if no opening tag is found.
+     */
     private fun extractTextareaContent(response: String): String {
+        // Strip reasoning blocks first to avoid interference
+        val cleaned = stripThinkTags(response)
+
         val openTag = "<textarea>"
         val closeTag = "</textarea>"
 
-        val openIndex = response.indexOf(openTag, ignoreCase = true)
+        val openIndex = cleaned.indexOf(openTag, ignoreCase = true)
         if (openIndex == -1) {
-            return response // no tags — use the whole response
+            return cleaned // no tags — use the whole cleaned response
         }
 
         val contentStart = openIndex + openTag.length
-        val closeIndex = response.indexOf(closeTag, contentStart, ignoreCase = true)
+        val closeIndex = cleaned.indexOf(closeTag, contentStart, ignoreCase = true)
 
         return if (closeIndex == -1) {
             // Missing closing tag — everything after the opening tag
-            response.substring(contentStart).trim()
+            cleaned.substring(contentStart).trim()
         } else {
-            response.substring(contentStart, closeIndex).trim()
+            cleaned.substring(contentStart, closeIndex).trim()
         }
     }
 

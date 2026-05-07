@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Configuration (Debug)
+
+    Debug builds allow cleartext HTTP for development flexibility.
+    Custom API endpoints (HTTP) configured via the Settings screen
+    will work without requiring HTTPS.
+
+    SECURITY: This file is ONLY used in debug builds.
+    Release builds use src/main/res/xml/network_security_config.xml
+    which enforces strict HTTPS-only policy.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

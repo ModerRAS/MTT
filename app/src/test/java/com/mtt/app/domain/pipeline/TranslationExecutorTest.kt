@@ -106,7 +106,7 @@ class TranslationExecutorTest {
     // ═══════════════════════════════════════════════
 
     @Test
-    fun `executeBatch catches ApiException and emits Failure`() = runBlocking {
+    fun `executeBatch catches ApiException and emits Success with passthrough`() = runBlocking {
         // Create config with invalid API key to trigger ApiException
         val failingConfig = testConfig.copy(
             model = ModelInfo(
@@ -122,15 +122,14 @@ class TranslationExecutorTest {
 
         val results = executor.executeBatch(listOf("Test text"), failingConfig).toList()
 
-        // Should emit Started then Failure
+        // Should emit Started then Success with original text as passthrough
         val started = results.find { it is BatchResult.Started }
         assertNotNull("Should have Started event", started)
 
         val last = results.last()
-        assertTrue("Last result should be Failure, was $last", last is BatchResult.Failure)
-        val failure = last as BatchResult.Failure
-        assertTrue("Error should be ApiException or TranslationException",
-            failure.error is ApiException || failure.error is com.mtt.app.core.error.TranslationException)
+        assertTrue("Last result should be Success (passthrough), was $last", last is BatchResult.Success)
+        val success = last as BatchResult.Success
+        assertEquals("Passthrough should return original text", listOf("Test text"), success.items)
     }
 
     // ═══════════════════════════════════════════════

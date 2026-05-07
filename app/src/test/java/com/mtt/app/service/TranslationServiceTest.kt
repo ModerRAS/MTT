@@ -12,7 +12,9 @@ import com.mtt.app.HiltTestRunner
 import dagger.hilt.android.testing.HiltTestApplication
 import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.llm.RateLimiter
+import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.GlossaryDao
+import com.mtt.app.data.local.dao.TranslationJobDao
 import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.network.HttpClientFactory
 import com.mtt.app.data.security.SecureStorage
@@ -96,6 +98,14 @@ class TranslationServiceTest {
         @Provides
         @Singleton
         fun provideGlossaryDao(): GlossaryDao = mockk(relaxed = true)
+
+        @Provides
+        @Singleton
+        fun provideTranslationJobDao(): TranslationJobDao = mockk(relaxed = true)
+
+        @Provides
+        @Singleton
+        fun provideExtractionJobDao(): ExtractionJobDao = mockk(relaxed = true)
     }
 
     private lateinit var service: TranslationService
@@ -135,13 +145,13 @@ class TranslationServiceTest {
     @Test
     fun `notification channel is created on service create`() {
         // Verified by buildNotification not throwing and notification having content
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         assertNotNull("Notification should be created", notification)
     }
 
     @Test
     fun `notification channel uses IMPORTANCE_LOW`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         assertEquals(
             Notification.PRIORITY_LOW,
             notification.priority
@@ -150,14 +160,14 @@ class TranslationServiceTest {
 
     @Test
     fun `notification channel name is correct`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
         assertEquals("MTT 翻译中", shadow.contentTitle)
     }
 
     @Test
     fun `notification channel badge is disabled`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
         assertEquals("已完成 0/0 (0%)", shadow.contentText)
     }
@@ -169,7 +179,7 @@ class TranslationServiceTest {
     @Test
     fun `initial notification shows MTT 翻译中 title`() {
         // _serviceProgress is TranslationProgress.initial() by default
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
 
         assertEquals("MTT 翻译中", shadow.contentTitle)
@@ -177,7 +187,7 @@ class TranslationServiceTest {
 
     @Test
     fun `initial notification shows zero progress`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
 
         assertEquals("已完成 0/0 (0%)", shadow.contentText)
@@ -185,7 +195,7 @@ class TranslationServiceTest {
 
     @Test
     fun `notification has ongoing flag`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         assertTrue(
             (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
         )
@@ -193,7 +203,7 @@ class TranslationServiceTest {
 
     @Test
     fun `notification uses low priority`() {
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         assertEquals(
             Notification.PRIORITY_LOW,
             notification.priority
@@ -210,7 +220,7 @@ class TranslationServiceTest {
             status = "翻译中"
         )
 
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
 
         assertEquals("已完成 3/10 (30%)", shadow.contentText)
@@ -226,7 +236,7 @@ class TranslationServiceTest {
             status = "翻译完成"
         )
 
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
 
         assertEquals("已完成 5/5 (100%)", shadow.contentText)
@@ -236,7 +246,7 @@ class TranslationServiceTest {
     fun `notification shows indeterminate progress when total is zero`() {
         TranslationService._serviceProgress.value = TranslationProgress.initial()
 
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         val shadow = shadowOf(notification)
 
         assertEquals("已完成 0/0 (0%)", shadow.contentText)
@@ -253,7 +263,7 @@ class TranslationServiceTest {
             status = "翻译中"
         )
 
-        val notification = service.buildNotification()
+        val notification = service.buildTranslationNotification()
         assertEquals(
             "已完成 2/8 (25%)",
             shadowOf(notification).contentText
@@ -268,7 +278,7 @@ class TranslationServiceTest {
             status = "翻译中"
         )
 
-        val updatedNotification = service.buildNotification()
+        val updatedNotification = service.buildTranslationNotification()
         assertEquals(
             "已完成 4/8 (50%)",
             shadowOf(updatedNotification).contentText
@@ -330,7 +340,7 @@ class TranslationServiceTest {
     fun `wakeLock tag contains translation wl`() {
         // Verify the tag constant is set as expected
         assertTrue(
-            TranslationService.WAKE_LOCK_TAG.contains("translation")
+            TranslationService.WAKE_LOCK_TAG.contains("mtt:bg:wl")
         )
     }
 
@@ -388,13 +398,13 @@ class TranslationServiceTest {
     }
 
     @Test
-    fun `NOTIFICATION_ID is 1`() {
-        assertEquals(1, TranslationService.NOTIFICATION_ID)
+    fun `NOTIFICATION_ID_TRANSLATION is 1`() {
+        assertEquals(1, TranslationService.NOTIFICATION_ID_TRANSLATION)
     }
 
     @Test
-    fun `WAKELOCK_TIMEOUT is 10 minutes`() {
-        assertEquals(10 * 60 * 1000L, TranslationService.WAKELOCK_TIMEOUT_MS)
+    fun `WAKELOCK_TIMEOUT is 1 hour`() {
+        assertEquals(60 * 60 * 1000L, TranslationService.WAKELOCK_TIMEOUT_MS)
     }
 
     @Test
