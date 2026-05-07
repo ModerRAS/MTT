@@ -129,6 +129,8 @@ class OpenAiClient(
         val contentBuilder = StringBuilder()
         val toolCallArgsBuilder = StringBuilder()
         var tokensUsed = 0
+        var inputTokens = 0
+        var outputTokens = 0
 
         try {
             var line: String?
@@ -168,6 +170,8 @@ class OpenAiClient(
                     val usage = json.optJSONObject("usage")
                     if (usage != null) {
                         tokensUsed = usage.optInt("total_tokens", 0)
+                        inputTokens = usage.optInt("prompt_tokens", 0)
+                        outputTokens = usage.optInt("completion_tokens", 0)
                     }
                 } catch (_: Exception) {
                     // Skip malformed JSON lines
@@ -205,20 +209,24 @@ class OpenAiClient(
                     }
 
                     if (isObjectMode) {
-                        AppLogger.d(TAG, "SSE tool call complete: ${pairs.size} pairs, $tokensUsed tokens")
+                        AppLogger.d(TAG, "SSE tool call complete: ${pairs.size} pairs, $tokensUsed tokens (input=$inputTokens, output=$outputTokens)")
                         return TranslationResponse(
                             content = argsJson,
                             model = model,
                             tokensUsed = tokensUsed,
+                            inputTokens = inputTokens,
+                            outputTokens = outputTokens,
                             translations = flatTranslations,
                             translationPairs = pairs
                         )
                     } else {
-                        AppLogger.d(TAG, "SSE tool call complete: ${flatTranslations.size} items, $tokensUsed tokens")
+                        AppLogger.d(TAG, "SSE tool call complete: ${flatTranslations.size} items, $tokensUsed tokens (input=$inputTokens, output=$outputTokens)")
                         return TranslationResponse(
                             content = argsJson,
                             model = model,
                             tokensUsed = tokensUsed,
+                            inputTokens = inputTokens,
+                            outputTokens = outputTokens,
                             translations = flatTranslations
                         )
                     }
@@ -229,12 +237,14 @@ class OpenAiClient(
             // Fall through to return as content if JSON parsing fails
         }
 
-        AppLogger.d(TAG, "SSE stream complete: ${contentBuilder.length} chars, $tokensUsed tokens")
+        AppLogger.d(TAG, "SSE stream complete: ${contentBuilder.length} chars, $tokensUsed tokens (input=$inputTokens, output=$outputTokens)")
 
         return TranslationResponse(
             content = contentBuilder.toString(),
             model = model,
-            tokensUsed = tokensUsed
+            tokensUsed = tokensUsed,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens
         )
     }
 

@@ -93,12 +93,16 @@ class AnthropicClient(
             val response = client.messages().create(params)
 
             val content = extractContent(response)
-            val tokensUsed = (response.usage().inputTokens() + response.usage().outputTokens()).toInt()
+            val inputTokens = response.usage().inputTokens().toInt()
+            val outputTokens = response.usage().outputTokens().toInt()
+            val tokensUsed = inputTokens + outputTokens
 
             return TranslationResponse(
                 content = content,
                 model = model,
-                tokensUsed = tokensUsed
+                tokensUsed = tokensUsed,
+                inputTokens = inputTokens,
+                outputTokens = outputTokens
             )
         } catch (e: IOException) {
             AppLogger.e(TAG, "Anthropic translate IOException: ${e.message}", e)
