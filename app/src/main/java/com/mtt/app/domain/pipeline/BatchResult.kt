@@ -16,14 +16,18 @@ sealed class BatchResult {
         val batchIndex: Int,
         val completed: Int,
         val total: Int,
-        val stage: String = ""
+        val stage: String = "",
+        val inputTokens: Int,
+        val outputTokens: Int
     ) : BatchResult()
 
     /** Batch completed successfully. */
     data class Success(
         val batchIndex: Int,
         val items: List<String>,
-        val tokensUsed: Int
+        val tokensUsed: Int,
+        val inputTokens: Int,
+        val outputTokens: Int
     ) : BatchResult()
 
     /** Batch failed irrecoverably. */
