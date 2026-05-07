@@ -177,7 +177,8 @@ class TranslationService : Service() {
                                 completedItems = result.completed,
                                 status = "翻译中",
                                 totalInputTokens = _serviceProgress.value.totalInputTokens + result.inputTokens,
-                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens
+                                totalOutputTokens = _serviceProgress.value.totalOutputTokens + result.outputTokens,
+                                totalCacheTokens = _serviceProgress.value.totalCacheTokens + result.cacheTokens
                             )
                             // Persist progress to DB every progress tick
                             persistJobUpdate(

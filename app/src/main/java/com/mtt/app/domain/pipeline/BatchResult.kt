@@ -18,7 +18,8 @@ sealed class BatchResult {
         val total: Int,
         val stage: String = "",
         val inputTokens: Int,
-        val outputTokens: Int
+        val outputTokens: Int,
+        val cacheTokens: Int = 0
     ) : BatchResult()
 
     /** Batch completed successfully. */

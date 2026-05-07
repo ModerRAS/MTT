@@ -240,7 +240,8 @@ class TranslationExecutor @Inject constructor(
                 total = texts.size,
                 stage = "过滤 ${skipPositions.size} 条跳过项",
                 inputTokens = 0,
-                outputTokens = 0
+                outputTokens = 0,
+                cacheTokens = cacheTokensIncrement
             )
         )
 
@@ -297,7 +298,8 @@ class TranslationExecutor @Inject constructor(
                             total = texts.size,
                             stage = "翻译中 $completedCount/${texts.size}",
                             inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens
+                            outputTokens = totalOutputTokens,
+                            cacheTokens = cacheTokensIncrement
                         )
                     )
                 }

@@ -547,6 +547,46 @@ private fun TranslationScreenContent(
                 }
             }
 
+            // Token statistics (always visible)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Token 统计",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    val hasTokenData = progress.totalInputTokens > 0 || progress.totalOutputTokens > 0 || progress.totalCacheTokens > 0
+
+                    if (hasTokenData) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TokenDonutChart(
+                            data = TokenChartData(
+                                inputTokens = progress.totalInputTokens,
+                                outputTokens = progress.totalOutputTokens,
+                                cacheTokens = progress.totalCacheTokens
+                            )
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "开始翻译后将在此处显示 Token 用量统计",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+            }
+
             // Progress area
             if (isTranslating || isCompleted) {
                 Card(
@@ -577,18 +617,6 @@ private fun TranslationScreenContent(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-
-                        // Token donut chart
-                        if (progress.totalInputTokens > 0 || progress.totalOutputTokens > 0) {
-                            TokenDonutChart(
-                                data = TokenChartData(
-                                    inputTokens = progress.totalInputTokens,
-                                    outputTokens = progress.totalOutputTokens,
-                                    cacheTokens = progress.totalCacheTokens
-                                ),
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
 
                         Text(
                             text = progress.status,
