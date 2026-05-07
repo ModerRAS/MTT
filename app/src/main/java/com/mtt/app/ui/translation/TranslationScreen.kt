@@ -73,6 +73,8 @@ import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.model.TranslationUiState
 import com.mtt.app.ui.glossary.ExtractionProgress
 import com.mtt.app.ui.glossary.ExtractionProgressSection
+import com.mtt.app.ui.translation.TokenChartData
+import com.mtt.app.ui.translation.TokenDonutChart
 import com.mtt.app.ui.theme.MttTheme
 import java.text.NumberFormat
 import java.util.Locale
@@ -575,6 +577,18 @@ private fun TranslationScreenContent(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+
+                        // Token donut chart
+                        if (progress.totalInputTokens > 0 || progress.totalOutputTokens > 0) {
+                            TokenDonutChart(
+                                data = TokenChartData(
+                                    inputTokens = progress.totalInputTokens,
+                                    outputTokens = progress.totalOutputTokens,
+                                    cacheTokens = progress.totalCacheTokens
+                                ),
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
 
                         Text(
                             text = progress.status,
