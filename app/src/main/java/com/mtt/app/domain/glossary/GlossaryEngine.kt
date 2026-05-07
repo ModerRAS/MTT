@@ -1,6 +1,7 @@
 package com.mtt.app.domain.glossary
 
 import com.mtt.app.data.model.TranslationMode
+import com.mtt.app.domain.pipeline.SkipPatterns
 
 /**
  * A glossary entry defining a source-to-target term mapping.
@@ -237,13 +238,15 @@ object GlossaryEngine {
      * @return Formatted glossary section, or "" if entries is empty
      */
     fun buildGlossarySection(entries: List<GlossaryEntry>, mode: TranslationMode): String {
-        if (entries.isEmpty()) return ""
+        // Skip entries that don't need translation (pure numbers, EV codes, etc.)
+        val filtered = entries.filter { !SkipPatterns.shouldSkip(it.source) }
+        if (filtered.isEmpty()) return ""
 
         val sb = StringBuilder()
         sb.appendLine()
         sb.appendLine("###术语表")
         sb.appendLine("原文|译文|备注")
-        for (entry in entries) {
+        for (entry in filtered) {
             sb.appendLine("${entry.source}|${entry.target}|")
         }
         return sb.toString()
@@ -266,12 +269,14 @@ object GlossaryEngine {
      * @return Formatted prohibition section, or "" if entries is empty
      */
     fun buildProhibitionSection(entries: List<GlossaryEntry>): String {
-        if (entries.isEmpty()) return ""
+        // Skip entries that don't need translation (pure numbers, EV codes, etc.)
+        val filtered = entries.filter { !SkipPatterns.shouldSkip(it.source) }
+        if (filtered.isEmpty()) return ""
 
         val sb = StringBuilder()
         sb.appendLine()
         sb.appendLine("###DoNotTranslate")
-        for (entry in entries) {
+        for (entry in filtered) {
             sb.appendLine("${entry.source}|${entry.target}")
         }
         return sb.toString()

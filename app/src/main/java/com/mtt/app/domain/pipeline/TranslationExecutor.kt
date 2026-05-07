@@ -241,17 +241,10 @@ class TranslationExecutor @Inject constructor(
         }
 
         // 1b. Filter out items that need no translation — pure numbers, EV codes, etc.
-        val passthroughPatterns = listOf(
-            Regex("""^\d+$"""),                      // pure digits: "0", "123"
-            Regex("""^EV\d+$""", RegexOption.IGNORE_CASE)  // EV codes: "EV001", "ev074"
-        )
         val numericPositions = mutableSetOf<Int>()
         val llmNonEmptyItems = mutableListOf<Pair<Int, String>>()
         for ((pos, item) in nonEmptyItems.withIndex()) {
-            val trimmed = item.second.trim()
-            val shouldSkip = trimmed.toDoubleOrNull() != null ||
-                passthroughPatterns.any { it.matches(trimmed) }
-            if (shouldSkip) {
+            if (SkipPatterns.shouldSkip(item.second)) {
                 numericPositions.add(pos)
                 AppLogger.d(TAG, "Passthrough segment #${item.first}: \"${item.second}\"")
             } else {

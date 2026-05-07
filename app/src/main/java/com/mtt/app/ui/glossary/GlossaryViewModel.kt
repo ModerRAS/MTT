@@ -19,6 +19,7 @@ import com.mtt.app.data.model.toUiModel
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.glossary.GlossaryEntry
 import com.mtt.app.domain.glossary.GlossaryEngine
+import com.mtt.app.domain.pipeline.SkipPatterns
 import com.mtt.app.domain.usecase.ExtractTermsUseCase
 import com.mtt.app.service.TranslationService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -496,7 +497,10 @@ class GlossaryViewModel @Inject constructor(
      * Confirm extraction and insert selected terms into database.
      */
     fun confirmExtraction(selected: List<ExtractedTerm>) {
-        val entities = selected.map { term ->
+        // Skip entries that don't need translation (pure numbers, EV codes, etc.)
+        val filtered = selected.filter { !SkipPatterns.shouldSkip(it.sourceTerm) }
+        val skipped = selected.size - filtered.size
+        val entities = filtered.map { term ->
             GlossaryEntryEntity(
                 id = 0,
                 projectId = currentProjectId,
@@ -508,7 +512,9 @@ class GlossaryViewModel @Inject constructor(
         viewModelScope.launch {
             glossaryDao.insertAll(entities)
             loadGlossaryData()
-            _uiState.update { it.copy(successMessage = "成功导入 ${selected.size} 条术语") }
+            val msg = "成功导入 ${filtered.size} 条术语" +
+                if (skipped > 0) "（已跳过 $skipped 条数字/EV编码）" else ""
+            _uiState.update { it.copy(successMessage = msg) }
         }
         _showExtractionReview.value = false
         _extractedTerms.value = emptyList()
