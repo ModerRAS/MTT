@@ -32,7 +32,7 @@ class TranslateTextsUseCase @Inject constructor(
         config: TranslationConfig
     ): Flow<BatchResult> = flow {
         if (texts.isEmpty()) {
-            emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0))
+            emit(BatchResult.Success(batchIndex = 0, items = emptyList(), tokensUsed = 0, inputTokens = 0, outputTokens = 0))
             return@flow
         }
 
@@ -59,10 +59,12 @@ class TranslateTextsUseCase @Inject constructor(
                     batchIndex = 0,
                     completed = texts.size,
                     total = texts.size,
-                    stage = "All items cached"
+                    stage = "All items cached",
+                    inputTokens = 0,
+                    outputTokens = 0
                 )
             )
-            emit(BatchResult.Success(batchIndex = 0, items = sorted, tokensUsed = 0))
+            emit(BatchResult.Success(batchIndex = 0, items = sorted, tokensUsed = 0, inputTokens = 0, outputTokens = 0))
             return@flow
         }
 
@@ -78,7 +80,9 @@ class TranslateTextsUseCase @Inject constructor(
                             batchIndex = 0,
                             completed = completed,
                             total = texts.size,
-                            stage = "Translation started (${result.size} texts)"
+                            stage = "Translation started (${result.size} texts)",
+                            inputTokens = 0,
+                            outputTokens = 0
                         )
                     )
                 }
@@ -89,7 +93,9 @@ class TranslateTextsUseCase @Inject constructor(
                             batchIndex = 0,
                             completed = cachedPairs.size + result.completed,
                             total = texts.size,
-                            stage = result.stage
+                            stage = result.stage,
+                            inputTokens = result.inputTokens,
+                            outputTokens = result.outputTokens
                         )
                     )
                 }
@@ -126,14 +132,18 @@ class TranslateTextsUseCase @Inject constructor(
                             batchIndex = 0,
                             completed = texts.size,
                             total = texts.size,
-                            stage = "Translation complete"
+                            stage = "Translation complete",
+                            inputTokens = result.inputTokens,
+                            outputTokens = result.outputTokens
                         )
                     )
                     emit(
                         BatchResult.Success(
                             batchIndex = 0,
                             items = merged,
-                            tokensUsed = result.tokensUsed
+                            tokensUsed = result.tokensUsed,
+                            inputTokens = result.inputTokens,
+                            outputTokens = result.outputTokens
                         )
                     )
                 }
