@@ -14,6 +14,7 @@ import com.mtt.app.data.model.ExtractedTerm
 import com.mtt.app.data.model.LlmProvider
 import com.mtt.app.data.model.LlmRequestConfig
 import com.mtt.app.data.model.ModelInfo
+import com.mtt.app.data.model.TranslationPair
 import com.mtt.app.data.remote.anthropic.AnthropicClient
 import com.mtt.app.data.remote.llm.LlmService
 import com.mtt.app.data.remote.llm.LlmServiceFactory
@@ -24,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import javax.inject.Inject
 
 /**
@@ -57,12 +59,20 @@ class ExtractTermsUseCase @Inject constructor(
         private val VALIDATION_SYSTEM_PROMPT = buildString {
             append("你是一个术语验证专家。以下是一批由频率分析发现的候选术语。\n")
             append("请判断每个候选词是否是真正的专有名词、人名、地名或技术术语。\n")
-            append("输出 JSON 数组：[{\"sourceTerm\": \"原文术语\", \"suggestedTarget\": \"建议译文\", \"category\": \"person/place/tech/other\"}]\n")
+            append("使用 output_terms 工具输出验证结果。\n")
             append("规则：\n")
             append("1. 只保留真正的专有名词/术语，丢弃普通词汇或无关内容\n")
             append("2. category 只能使用 person、place、tech、other 之一\n")
             append("3. suggestedTarget 提供建议的目标语言翻译，如果无法确定可留空字符串\n")
-            append("4. 不要输出 JSON 数组之外的任何文字\n")
+            append("4. 不要输出工具调用之外的任何文字\n")
+        }
+
+        /**
+         * Tool definition for structured term validation output.
+         * The model calls this tool instead of generating free-text JSON.
+         */
+        private val TERM_VALIDATION_TOOL = buildString {
+            append("""{"name":"output_terms","description":"Output validated glossary terms with their translations","parameters":{"type":"object","properties":{"terms":{"type":"array","items":{"type":"object","properties":{"sourceTerm":{"type":"string","description":"The original term in source language"},"suggestedTarget":{"type":"string","description":"Suggested translation in target language"},"category":{"type":"string","enum":["person","place","tech","other"],"description":"Term category"}},"required":["sourceTerm","suggestedTarget","category"]}}},"required":["terms"]}}""")
         }
 
         private val json = Json {
@@ -196,11 +206,16 @@ class ExtractTermsUseCase @Inject constructor(
                     systemPrompt = VALIDATION_SYSTEM_PROMPT,
                     model = modelInfo,
                     temperature = LLM_TEMPERATURE,
-                    maxTokens = TARGET_TOKENS_PER_CALL
+                    maxTokens = TARGET_TOKENS_PER_CALL,
+                    toolChoice = "output_terms",
+                    toolDefinitionJson = TERM_VALIDATION_TOOL
                 )
             )
 
-            return parseExtractionResponse(response.content)
+            // Tool call mode returns structured data via translationPairs → each pair
+            // has source(sourceTerm) and translated(suggestedTarget).
+            // Extract categories from the content JSON (tool call args).
+            return parseExtractionResponse(response.content, response.translationPairs)
         } catch (e: ApiException) {
             return Result.failure(e)
         } catch (e: NetworkException) {
@@ -236,11 +251,34 @@ class ExtractTermsUseCase @Inject constructor(
     }
 
     /**
-     * Parse the LLM JSON response into a list of [ExtractedTerm]s.
+     * Parse the LLM response into a list of [ExtractedTerm]s.
      *
-     * Handles common LLM output patterns: markdown code fences, leading/trailing text.
+     * Two modes:
+     * 1. Tool call mode: [translationPairs] contains structured data (source=sourceTerm, translated=suggestedTarget).
+     *    The content JSON (tool call args) contains category info.
+     * 2. Free-text mode: Parse JSON array from raw content (legacy fallback).
      */
-    private fun parseExtractionResponse(rawContent: String): Result<List<ExtractedTerm>> {
+    private fun parseExtractionResponse(
+        rawContent: String,
+        translationPairs: List<TranslationPair>? = null
+    ): Result<List<ExtractedTerm>> {
+        // Tool call mode: pairs carry sourceTerm and suggestedTarget
+        if (translationPairs != null && translationPairs.isNotEmpty()) {
+            val terms = mutableListOf<ExtractedTerm>()
+            val categories = extractCategoriesFromContent(rawContent)
+            for ((i, pair) in translationPairs.withIndex()) {
+                terms.add(
+                    ExtractedTerm(
+                        sourceTerm = pair.source,
+                        suggestedTarget = pair.translated,
+                        category = categories.getOrElse(i) { "other" }
+                    )
+                )
+            }
+            if (terms.isNotEmpty()) return Result.success(terms)
+        }
+
+        // Free-text fallback: legacy JSON parsing
         if (rawContent.isBlank()) {
             return Result.success(emptyList())
         }
@@ -253,6 +291,24 @@ class ExtractTermsUseCase @Inject constructor(
             Result.failure(
                 ParseException("Failed to parse LLM extraction response: ${e.message}")
             )
+        }
+    }
+
+    /**
+     * Extract category from tool call arguments JSON.
+     * The tool call args contain: {"terms": [{"sourceTerm": "...", "suggestedTarget": "...", "category": "..."}]}
+     */
+    private fun extractCategoriesFromContent(content: String): List<String> {
+        if (content.isBlank()) return emptyList()
+        return try {
+            val jsonObj = JSONObject(content)
+            val termsArr = jsonObj.optJSONArray("terms")
+            if (termsArr == null) return emptyList()
+            (0 until termsArr.length()).map { i ->
+                termsArr.getJSONObject(i).optString("category", "other")
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 

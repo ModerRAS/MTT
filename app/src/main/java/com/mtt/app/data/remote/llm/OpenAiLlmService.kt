@@ -27,7 +27,8 @@ class OpenAiLlmService(
                 model = config.model.modelId,
                 temperature = config.temperature,
                 maxTokens = config.maxTokens,
-                toolChoice = config.toolChoice
+                toolChoice = config.toolChoice,
+                toolDefinitionJson = config.toolDefinitionJson
             )
         }
     }

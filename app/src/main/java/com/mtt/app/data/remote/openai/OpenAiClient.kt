@@ -64,12 +64,14 @@ class OpenAiClient(
         model: String,
         temperature: Float? = null,
         maxTokens: Int? = null,
-        toolChoice: String? = null
+        toolChoice: String? = null,
+        toolDefinitionJson: String? = null
     ): TranslationResponse {
         try {
             val jsonBody = buildJsonBody(
                 messages, systemPrompt, model, temperature, maxTokens,
-                stream = true, toolChoice = toolChoice
+                stream = true, toolChoice = toolChoice,
+                toolDefinitionJson = toolDefinitionJson
             )
             val normalizedBaseUrl = normalizeApiUrl(baseUrl)
             val url = "$normalizedBaseUrl/chat/completions"
@@ -264,7 +266,8 @@ class OpenAiClient(
         temperature: Float? = null,
         maxTokens: Int? = null,
         stream: Boolean = false,
-        toolChoice: String? = null
+        toolChoice: String? = null,
+        toolDefinitionJson: String? = null
     ): String {
         val root = JSONObject()
         root.put("model", model)
@@ -294,48 +297,58 @@ class OpenAiClient(
 
         // Tool calling mode
         if (toolChoice != null) {
-            val tools = JSONArray()
-            val toolObj = JSONObject()
-            toolObj.put("type", "function")
+            if (toolDefinitionJson != null) {
+                // Use custom tool definition (e.g., for term extraction)
+                val tools = JSONArray()
+                val parsedTool = JSONObject(toolDefinitionJson)
+                parsedTool.put("type", "function")
+                tools.put(parsedTool)
+                root.put("tools", tools)
+            } else {
+                // Default: output_translations tool for translation pipeline
+                val tools = JSONArray()
+                val toolObj = JSONObject()
+                toolObj.put("type", "function")
 
-            val func = JSONObject()
-            func.put("name", "output_translations")
-            func.put("description", "Output the translated texts in the same order as the input items")
+                val func = JSONObject()
+                func.put("name", "output_translations")
+                func.put("description", "Output the translated texts in the same order as the input items")
 
-            val params = JSONObject()
-            params.put("type", "object")
+                val params = JSONObject()
+                params.put("type", "object")
 
-            val props = JSONObject()
-            val translations = JSONObject()
-            translations.put("type", "array")
-            translations.put("description", "Translated results, each item pairs source text with its translation")
+                val props = JSONObject()
+                val translations = JSONObject()
+                translations.put("type", "array")
+                translations.put("description", "Translated results, each item pairs source text with its translation")
 
-            val itemSchema = JSONObject()
-            itemSchema.put("type", "object")
-            val itemProps = JSONObject()
+                val itemSchema = JSONObject()
+                itemSchema.put("type", "object")
+                val itemProps = JSONObject()
 
-            val sourceProp = JSONObject()
-            sourceProp.put("type", "string")
-            sourceProp.put("description", "Original source text (without numbering prefix, just the raw text)")
-            itemProps.put("source", sourceProp)
+                val sourceProp = JSONObject()
+                sourceProp.put("type", "string")
+                sourceProp.put("description", "Original source text (without numbering prefix, just the raw text)")
+                itemProps.put("source", sourceProp)
 
-            val translatedProp = JSONObject()
-            translatedProp.put("type", "string")
-            translatedProp.put("description", "Translated text in the target language")
-            itemProps.put("translated", translatedProp)
+                val translatedProp = JSONObject()
+                translatedProp.put("type", "string")
+                translatedProp.put("description", "Translated text in the target language")
+                itemProps.put("translated", translatedProp)
 
-            itemSchema.put("properties", itemProps)
-            itemSchema.put("required", JSONArray(listOf("source", "translated")))
-            translations.put("items", itemSchema)
+                itemSchema.put("properties", itemProps)
+                itemSchema.put("required", JSONArray(listOf("source", "translated")))
+                translations.put("items", itemSchema)
 
-            props.put("translations", translations)
-            params.put("properties", props)
-            params.put("required", JSONArray(listOf("translations")))
-            func.put("parameters", params)
+                props.put("translations", translations)
+                params.put("properties", props)
+                params.put("required", JSONArray(listOf("translations")))
+                func.put("parameters", params)
 
-            toolObj.put("function", func)
-            tools.put(toolObj)
-            root.put("tools", tools)
+                toolObj.put("function", func)
+                tools.put(toolObj)
+                root.put("tools", tools)
+            }
 
             val choice = JSONObject()
             choice.put("type", "function")
