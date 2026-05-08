@@ -35,11 +35,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground Service for background translation -->
+        <!-- Foreground Service for background translation + extraction -->
         <service
             android:name=".service.TranslationService"
             android:foregroundServiceType="dataSync"
-            android:exported="false" />
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mtt.app.action.DEBUG_EXTRACT" />
+            </intent-filter>
+        </service>
 
     </application>
 

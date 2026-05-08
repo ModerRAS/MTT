@@ -302,11 +302,11 @@ class TranslationViewModel @Inject constructor(
     // ── Configurable translation parameters ───────
     // Loaded from SecureStorage (configured in Settings screen)
 
-    /** Current source language (e.g., "日语", "英语"). Read by TranslationScreen to initialize dropdown. */
+    /** Current source language (e.g., "日语", "英语"). Read by HomeScreen to initialize dropdown. */
     var sourceLang: String = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "日语"
         private set
 
-    /** Current target language (e.g., "中文", "英语"). Read by TranslationScreen to initialize dropdown. */
+    /** Current target language (e.g., "中文", "英语"). Read by HomeScreen to initialize dropdown. */
     var targetLang: String = secureStorage.getValue(SecureStorage.KEY_TARGET_LANG) ?: "中文"
         private set
     private var temperature: Float = 0.3f
@@ -990,17 +990,20 @@ class TranslationViewModel @Inject constructor(
     }
 
     /**
-     * Confirm extraction and insert selected terms into database.
+     * Confirm extraction and insert selected items into database.
+     * Non-translate items become prohibition entries. Category is stored in info field.
      */
     fun confirmExtraction(selected: List<com.mtt.app.data.model.ExtractedTerm>) {
         val entities = selected.map { term ->
+            val isProhibition = term.type == com.mtt.app.data.model.ExtractedTerm.TYPE_NON_TRANSLATE ||
+                    term.suggestedTarget.isBlank()
             com.mtt.app.data.model.GlossaryEntryEntity(
                 id = 0,
                 projectId = "default_project",
                 sourceTerm = term.sourceTerm,
-                targetTerm = term.suggestedTarget,
+                targetTerm = if (isProhibition) "" else term.suggestedTarget,
                 matchType = com.mtt.app.data.model.GlossaryEntryEntity.MATCH_TYPE_EXACT,
-                info = term.explanation
+                info = buildInfoField(term)
             )
         }
         viewModelScope.launch {
@@ -1009,6 +1012,17 @@ class TranslationViewModel @Inject constructor(
         }
         _showExtractionReview.value = false
         _extractedTerms.value = emptyList()
+    }
+
+    private fun buildInfoField(term: com.mtt.app.data.model.ExtractedTerm): String {
+        val parts = mutableListOf<String>()
+        if (term.category.isNotBlank()) {
+            parts.add(term.category)
+        }
+        if (term.explanation.isNotBlank() && term.explanation != term.category) {
+            parts.add(term.explanation)
+        }
+        return parts.joinToString(" | ")
     }
 
     /** Cancel extraction review, clearing extracted terms. */

@@ -13,7 +13,9 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.mtt.app.MainActivity
 import com.mtt.app.R
+import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.cache.CacheManager
+import com.mtt.app.data.io.StreamingJsonReader
 import com.mtt.app.data.local.dao.ExtractionJobDao
 import com.mtt.app.data.local.dao.TranslationJobDao
 import com.mtt.app.data.model.ExtractedTerm
@@ -86,6 +88,7 @@ class TranslationService : Service() {
             ACTION_START -> handleStart()
             ACTION_STOP -> handleStop()
             ACTION_EXTRACT_TERMS -> handleExtractTerms()
+            ACTION_DEBUG_EXTRACT -> handleDebugExtract(intent)
         }
         return START_NOT_STICKY
     }
@@ -333,6 +336,83 @@ class TranslationService : Service() {
     }
 
     /**
+     * Debug-only: read test JSON from a known path and run extraction directly.
+     * Trigger via adb:
+     *   adb shell am startservice -n com.mtt.app/.service.TranslationService \
+     *     -a com.mtt.app.action.DEBUG_EXTRACT \
+     *     --es path /sdcard/Download/ManualTransFile.json
+     */
+    private fun handleDebugExtract(intent: Intent) {
+        val filePath = intent.getStringExtra("path")
+            ?: "/sdcard/Download/ManualTransFile.json"
+        val sourceLang = intent.getStringExtra("lang") ?: "自动检测"
+
+        val file = java.io.File(filePath)
+        if (!file.exists()) {
+            AppLogger.w(TAG, "DEBUG_EXTRACT: file not found: $filePath")
+            stopSelf()
+            return
+        }
+
+        // Show foreground notification to prevent service from being killed
+        startForeground(NOTIFICATION_ID_EXTRACTION, buildExtractionNotification())
+        acquireWakeLock()
+
+        AppLogger.i(TAG, "DEBUG_EXTRACT: loading $filePath")
+        serviceScope.launch {
+            try {
+                // Read the JSON file
+                val map = LinkedHashMap<String, String>()
+                try {
+                    val inputStream = java.io.FileInputStream(file)
+                    try {
+                        val reader = com.mtt.app.data.io.StreamingJsonReader(inputStream)
+                        try {
+                            reader.readEntries { key, value -> map[key] = value }
+                        } finally { reader.close() }
+                    } finally { inputStream.close() }
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "DEBUG_EXTRACT: failed to read file: ${e.message}")
+                    stopSelf()
+                    return@launch
+                }
+
+                AppLogger.i(TAG, "DEBUG_EXTRACT: loaded ${map.size} texts, starting extraction...")
+
+                // Run extraction with progress updates
+                val result = extractTermsUseCase.extractTerms(map, sourceLang) { completed, total ->
+                    _extractionProgress.value = ExtractionProgress(completed, total)
+                    AppLogger.d(TAG, "DEBUG_EXTRACT: progress $completed/$total")
+                }
+
+                // Read accumulated tokens from the use case
+                val inTokens = extractTermsUseCase.accumulatedInputTokens
+                val outTokens = extractTermsUseCase.accumulatedOutputTokens
+
+                when (result) {
+                    is com.mtt.app.core.error.Result.Success -> {
+                        val items = result.data
+                        AppLogger.i(TAG, "DEBUG_EXTRACT: SUCCESS - ${items.size} items found (in=$inTokens, out=$outTokens)")
+                        for (item in items) {
+                            AppLogger.i(TAG, "  [${item.type}] ${item.sourceTerm} \u2192 ${item.suggestedTarget} (${item.category}) ${item.explanation}")
+                        }
+                        pendingExtractionResult = items
+                        _extractionProgress.value = ExtractionProgress(1, 1, inputTokens = inTokens, outputTokens = outTokens)
+                    }
+                    is com.mtt.app.core.error.Result.Failure -> {
+                        AppLogger.e(TAG, "DEBUG_EXTRACT: FAILED - ${result.exception.message}")
+                        _extractionProgress.value = ExtractionProgress(0, 0, inputTokens = inTokens, outputTokens = outTokens, errorMessage = result.exception.message)
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "DEBUG_EXTRACT: error: ${e.message}")
+            } finally {
+                stopSelf()
+            }
+        }
+    }
+
+    /**
      * Persist extraction job progress to the database.
      */
     private fun persistExtractionJobUpdate(status: String, completedChunks: Int) {
@@ -463,6 +543,8 @@ class TranslationService : Service() {
     // ═══════════════════════════════════════════════
 
     companion object {
+        private const val TAG = "TranslationService"
+        
         const val CHANNEL_ID = "mtt_background_task_channel"
         const val NOTIFICATION_ID_TRANSLATION = 1
         const val NOTIFICATION_ID_EXTRACTION = 2
@@ -473,6 +555,7 @@ class TranslationService : Service() {
         const val ACTION_START = "com.mtt.app.action.START_TRANSLATION"
         const val ACTION_STOP = "com.mtt.app.action.STOP_TRANSLATION"
         const val ACTION_EXTRACT_TERMS = "com.mtt.app.action.EXTRACT_TERMS"
+        const val ACTION_DEBUG_EXTRACT = "com.mtt.app.action.DEBUG_EXTRACT"
 
         // ── Translation shared state ─────────────
 

@@ -91,6 +91,33 @@ class GlossaryViewModel @Inject constructor(
                 _uiState.update { it.copy(hasSourceTexts = texts.isNotEmpty()) }
             }
         }
+        // Always observe extraction progress from TranslationService,
+        // so any extraction method (UI or debug intent) updates the UI.
+        viewModelScope.launch {
+            TranslationService.extractionProgress.collect { ep ->
+                _extractionProgress.value = ep
+
+                if (ep.isError) {
+                    _uiState.update { it.copy(errorMessage = ep.errorMessage ?: "术语提取失败") }
+                    _isExtracting.value = false
+                    return@collect
+                }
+
+                _isExtracting.value = ep.total > 0 && ep.completed < ep.total
+
+                // Check for completion — show review dialog with results
+                if (ep.total > 0 && ep.completed >= ep.total && !ep.isError) {
+                    val result = TranslationService.pendingExtractionResult
+                    if (result != null && result.isNotEmpty()) {
+                        _extractedTerms.value = result
+                        _showExtractionReview.value = true
+                    } else {
+                        _uiState.update { it.copy(errorMessage = "未发现候选术语") }
+                    }
+                    _isExtracting.value = false
+                }
+            }
+        }
         checkForIncompleteExtractionJob()
     }
 
@@ -467,59 +494,65 @@ class GlossaryViewModel @Inject constructor(
         }
         ContextCompat.startForegroundService(context, intent)
 
-        // Observe progress from the service
-        viewModelScope.launch {
-            TranslationService.extractionProgress.collect { ep ->
-                _extractionProgress.value = ep
-
-                if (ep.isError) {
-                    _uiState.update { it.copy(errorMessage = ep.errorMessage ?: "术语提取失败") }
-                    _isExtracting.value = false
-                    return@collect
-                }
-
-                _isExtracting.value = ep.total > 0 && ep.completed < ep.total
-
-                if (ep.total > 0 && ep.completed >= ep.total) {
-                    val result = TranslationService.pendingExtractionResult
-                    if (result != null && result.isNotEmpty()) {
-                        _extractedTerms.value = result
-                        _showExtractionReview.value = true
-                    } else {
-                        _uiState.update { it.copy(errorMessage = "未发现候选术语") }
-                    }
-                    _isExtracting.value = false
-                }
-            }
-        }
+        // Progress is now observed via the init {} collection of TranslationService.extractionProgress
+        _isExtracting.value = true
     }
 
     /**
-     * Confirm extraction and insert selected terms into database.
+     * Confirm extraction and insert selected items into database.
+     *
+     * Items with type [ExtractedTerm.TYPE_NON_TRANSLATE] or empty suggestedTarget
+     * are saved as prohibition entries (targetTerm = ""). Other items are saved
+     * as regular glossary entries. The category info is stored in the info field
+     * alongside any explanation/note.
      */
     fun confirmExtraction(selected: List<ExtractedTerm>) {
         // Skip entries that don't need translation (pure numbers, EV codes, etc.)
         val filtered = selected.filter { !SkipPatterns.shouldSkip(it.sourceTerm) }
         val skipped = selected.size - filtered.size
         val entities = filtered.map { term ->
+            val isProhibition = term.type == ExtractedTerm.TYPE_NON_TRANSLATE ||
+                    term.suggestedTarget.isBlank()
             GlossaryEntryEntity(
                 id = 0,
                 projectId = currentProjectId,
                 sourceTerm = term.sourceTerm,
-                targetTerm = term.suggestedTarget,
+                targetTerm = if (isProhibition) "" else term.suggestedTarget,
                 matchType = GlossaryEntryEntity.MATCH_TYPE_EXACT,
-                info = term.explanation
+                info = buildInfoField(term)
             )
         }
         viewModelScope.launch {
             glossaryDao.insertAll(entities)
             loadGlossaryData()
-            val msg = "成功导入 ${filtered.size} 条术语" +
-                if (skipped > 0) "（已跳过 $skipped 条数字/EV编码）" else ""
+            val typeCounts = filtered.groupBy { it.type }
+            val termCount = typeCounts[ExtractedTerm.TYPE_TERM]?.size ?: 0
+            val charCount = typeCounts[ExtractedTerm.TYPE_CHARACTER]?.size ?: 0
+            val ntCount = typeCounts[ExtractedTerm.TYPE_NON_TRANSLATE]?.size ?: 0
+            val parts = mutableListOf<String>()
+            if (termCount > 0) parts.add("$termCount 条术语")
+            if (charCount > 0) parts.add("$charCount 条角色")
+            if (ntCount > 0) parts.add("$ntCount 条禁翻项")
+            val msg = "成功导入 ${parts.joinToString("、")}" +
+                if (skipped > 0) "（已跳过 $skipped 条）" else ""
             _uiState.update { it.copy(successMessage = msg) }
         }
         _showExtractionReview.value = false
         _extractedTerms.value = emptyList()
+    }
+
+    /**
+     * Build the info field for a glossary entry, combining category and explanation.
+     */
+    private fun buildInfoField(term: ExtractedTerm): String {
+        val parts = mutableListOf<String>()
+        if (term.category.isNotBlank()) {
+            parts.add(term.category)
+        }
+        if (term.explanation.isNotBlank() && term.explanation != term.category) {
+            parts.add(term.explanation)
+        }
+        return parts.joinToString(" | ")
     }
 
     /**
@@ -570,13 +603,17 @@ class GlossaryViewModel @Inject constructor(
 
 /**
  * Extraction progress state.
- * @param completed    Number of chunks processed so far
- * @param total        Total number of chunks to process
- * @param errorMessage Non-null when extraction has failed; contains the error description
+ * @param completed       Number of chunks processed so far
+ * @param total           Total number of chunks to process
+ * @param inputTokens     Total input tokens consumed by the extraction LLM calls
+ * @param outputTokens    Total output tokens generated by the extraction LLM calls
+ * @param errorMessage    Non-null when extraction has failed; contains the error description
  */
 data class ExtractionProgress(
     val completed: Int,
     val total: Int,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0,
     val errorMessage: String? = null
 ) {
     val percentage: Float get() = if (total > 0) completed.toFloat() / total else 0f

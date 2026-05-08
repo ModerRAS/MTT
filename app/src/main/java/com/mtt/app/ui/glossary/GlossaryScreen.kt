@@ -3,6 +3,8 @@ package com.mtt.app.ui.glossary
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,25 +16,27 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -46,11 +50,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -63,19 +62,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import com.mtt.app.data.model.ExtractedTerm
 import com.mtt.app.data.model.GlossaryEntryUiModel
-import com.mtt.app.domain.glossary.GlossaryEntry
+import com.mtt.app.ui.components.ExtractionProgressSection
+import com.mtt.app.ui.components.ExtractionReviewDialog
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -794,116 +789,6 @@ fun GlossaryEntryDialog(
             }
         }
     )
-}
-
-/**
- * Extraction review dialog for AI-extracted terms.
- * Shows candidate terms with checkboxes, category, and "already exists" tag.
- */
-@Composable
-fun ExtractionReviewDialog(
-    terms: List<ExtractedTerm>,
-    existingTerms: List<String>,  // list of existing source terms for dedup check
-    onDismiss: () -> Unit,
-    onConfirm: (selected: List<ExtractedTerm>) -> Unit
-) {
-    var selected by remember { mutableStateOf(terms.toSet()) }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("确认导入术语 (${selected.size}/${terms.size})") },
-        text = {
-            LazyColumn {
-                items(terms) { term ->
-                    val alreadyExists = existingTerms.contains(term.sourceTerm)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = term in selected && !alreadyExists,
-                            onCheckedChange = { if (!alreadyExists) {
-                                selected = if (term in selected) {
-                                    selected - term
-                                } else {
-                                    selected + term
-                                }
-                            } },
-                            enabled = !alreadyExists
-                        )
-                        Column {
-                            Text(term.sourceTerm, fontWeight = FontWeight.Bold)
-                            Text("→ ${term.suggestedTarget}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (alreadyExists) {
-                                Text("已存在", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                            }
-                            if (term.explanation.isNotEmpty()) {
-                                Text("${term.explanation}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(selected.toList()) },
-                enabled = selected.isNotEmpty()
-            ) {
-                Text("确认导入 (${selected.size})")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
-}
-
-/**
- * Extraction progress card showing a linear progress bar + current/total chunks.
- */
-@Composable
-fun ExtractionProgressSection(progress: ExtractionProgress) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                text = "正在提取术语...",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            LinearProgressIndicator(
-                progress = { progress.percentage },
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.secondary,
-                trackColor = MaterialTheme.colorScheme.secondaryContainer
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = if (progress.isIndeterminate) {
-                    "正在分析文本..."
-                } else if (progress.completed < progress.total) {
-                    "正在验证候选术语 ${progress.completed}/${progress.total}"
-                } else {
-                    "处理完成"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-        }
-    }
 }
 
 /**
