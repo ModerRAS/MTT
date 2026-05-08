@@ -61,18 +61,19 @@ class ExtractTermsUseCase @Inject constructor(
             append("请判断每个候选词是否是真正的专有名词、人名、地名或技术术语。\n")
             append("使用 output_terms 工具输出验证结果。\n")
             append("规则：\n")
-            append("1. 只保留真正的专有名词/术语，丢弃普通词汇或无关内容\n")
-            append("2. category 只能使用 person、place、tech、other 之一\n")
-            append("3. suggestedTarget 提供建议的目标语言翻译，如果无法确定可留空字符串\n")
+            append("1. 只保留有意义的专有名词/术语，丢弃普通词汇或无意义内容\n")
+            append("2. translated 字段填写中文翻译\n")
+            append("3. explanation 字段简要解释该术语的含义或用途\n")
             append("4. 不要输出工具调用之外的任何文字\n")
         }
 
         /**
          * Tool definition for structured term validation output.
-         * The model calls this tool instead of generating free-text JSON.
+         * Uses `translations` array key (matching client parsing) with
+         * source, translated (Chinese target), and explanation fields.
          */
         private val TERM_VALIDATION_TOOL = buildString {
-            append("""{"name":"output_terms","description":"Output validated glossary terms with their translations","parameters":{"type":"object","properties":{"terms":{"type":"array","items":{"type":"object","properties":{"sourceTerm":{"type":"string","description":"The original term in source language"},"suggestedTarget":{"type":"string","description":"Suggested translation in target language"},"category":{"type":"string","enum":["person","place","tech","other"],"description":"Term category"}},"required":["sourceTerm","suggestedTarget","category"]}}},"required":["terms"]}}""")
+            append("""{"name":"output_terms","description":"Output validated glossary terms with Chinese translations and explanations","parameters":{"type":"object","properties":{"translations":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string","description":"The original term in source language"},"translated":{"type":"string","description":"Chinese translation of the term"},"explanation":{"type":"string","description":"Brief explanation of what this term means in context"}},"required":["source","translated","explanation"]}}},"required":["translations"]}}""")
         }
 
         private val json = Json {
@@ -254,24 +255,24 @@ class ExtractTermsUseCase @Inject constructor(
      * Parse the LLM response into a list of [ExtractedTerm]s.
      *
      * Two modes:
-     * 1. Tool call mode: [translationPairs] contains structured data (source=sourceTerm, translated=suggestedTarget).
-     *    The content JSON (tool call args) contains category info.
+     * 1. Tool call mode: [translationPairs] contains structured data (source, translated).
+     *    The content JSON (tool call args) contains explanation fields.
      * 2. Free-text mode: Parse JSON array from raw content (legacy fallback).
      */
     private fun parseExtractionResponse(
         rawContent: String,
         translationPairs: List<TranslationPair>? = null
     ): Result<List<ExtractedTerm>> {
-        // Tool call mode: pairs carry sourceTerm and suggestedTarget
+        // Tool call mode: pairs carry source and translated
         if (translationPairs != null && translationPairs.isNotEmpty()) {
             val terms = mutableListOf<ExtractedTerm>()
-            val categories = extractCategoriesFromContent(rawContent)
+            val explanations = extractExplanationsFromContent(rawContent)
             for ((i, pair) in translationPairs.withIndex()) {
                 terms.add(
                     ExtractedTerm(
                         sourceTerm = pair.source,
                         suggestedTarget = pair.translated,
-                        category = categories.getOrElse(i) { "other" }
+                        explanation = explanations.getOrElse(i) { "" }
                     )
                 )
             }
@@ -295,17 +296,17 @@ class ExtractTermsUseCase @Inject constructor(
     }
 
     /**
-     * Extract category from tool call arguments JSON.
-     * The tool call args contain: {"terms": [{"sourceTerm": "...", "suggestedTarget": "...", "category": "..."}]}
+     * Extract explanation from tool call arguments JSON.
+     * The tool call args contain: {"translations": [{"source": "...", "translated": "...", "explanation": "..."}]}
      */
-    private fun extractCategoriesFromContent(content: String): List<String> {
+    private fun extractExplanationsFromContent(content: String): List<String> {
         if (content.isBlank()) return emptyList()
         return try {
             val jsonObj = JSONObject(content)
-            val termsArr = jsonObj.optJSONArray("terms")
-            if (termsArr == null) return emptyList()
-            (0 until termsArr.length()).map { i ->
-                termsArr.getJSONObject(i).optString("category", "other")
+            val arr = jsonObj.optJSONArray("translations")
+            if (arr == null) return emptyList()
+            (0 until arr.length()).map { i ->
+                arr.getJSONObject(i).optString("explanation", "")
             }
         } catch (_: Exception) {
             emptyList()

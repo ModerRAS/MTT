@@ -837,8 +837,8 @@ fun ExtractionReviewDialog(
                             if (alreadyExists) {
                                 Text("已存在", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                             }
-                            if (term.category.isNotEmpty()) {
-                                Text("类别: ${term.category}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (term.explanation.isNotEmpty()) {
+                                Text("${term.explanation}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

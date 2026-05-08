@@ -999,7 +999,8 @@ class TranslationViewModel @Inject constructor(
                 projectId = "default_project",
                 sourceTerm = term.sourceTerm,
                 targetTerm = term.suggestedTarget,
-                matchType = com.mtt.app.data.model.GlossaryEntryEntity.MATCH_TYPE_EXACT
+                matchType = com.mtt.app.data.model.GlossaryEntryEntity.MATCH_TYPE_EXACT,
+                info = term.explanation
             )
         }
         viewModelScope.launch {

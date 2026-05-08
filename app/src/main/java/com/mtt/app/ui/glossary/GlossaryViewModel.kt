@@ -507,7 +507,8 @@ class GlossaryViewModel @Inject constructor(
                 projectId = currentProjectId,
                 sourceTerm = term.sourceTerm,
                 targetTerm = term.suggestedTarget,
-                matchType = GlossaryEntryEntity.MATCH_TYPE_EXACT
+                matchType = GlossaryEntryEntity.MATCH_TYPE_EXACT,
+                info = term.explanation
             )
         }
         viewModelScope.launch {
