@@ -615,7 +615,8 @@ class TranslationExecutor @Inject constructor(
             else if (response.translations != null && response.translations.isNotEmpty()) {
                 val count = minOf(response.translations.size, remainingLocalPositions.size)
                 for (i in 0 until count) {
-                    localResultMap[remainingLocalPositions[i]] = response.translations[i]
+                    val pos = remainingLocalPositions[i]
+                    localResultMap[pos] = restoreTranslation(pos, response.translations[i])
                 }
                 for (i in count until remainingLocalPositions.size) {
                     localResultMap[remainingLocalPositions[i]] = items[remainingLocalPositions[i]].second
@@ -626,9 +627,17 @@ class TranslationExecutor @Inject constructor(
             // Text fallback (no tool call output)
             else {
                 AppLogger.w(TAG, "No tool call result, falling back to text parsing")
+                val textFallbackPositions = remainingLocalPositions.toList()
                 executeTextFallback(
                     response, localResultMap, remainingLocalPositions, items, config
                 )
+                // Apply restore to entries produced by text fallback
+                for (pos in textFallbackPositions) {
+                    val value = localResultMap[pos]
+                    if (value != null) {
+                        localResultMap[pos] = restoreTranslation(pos, value)
+                    }
+                }
                 remainingLocalPositions.clear()
             }
         }

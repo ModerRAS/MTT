@@ -298,11 +298,12 @@ class OpenAiClient(
         // Tool calling mode
         if (toolChoice != null) {
             if (toolDefinitionJson != null) {
-                // Use custom tool definition (e.g., for term extraction)
+                // Use custom tool function body (name, description, parameters)
                 val tools = JSONArray()
-                val parsedTool = JSONObject(toolDefinitionJson)
-                parsedTool.put("type", "function")
-                tools.put(parsedTool)
+                val toolWrapper = JSONObject()
+                toolWrapper.put("type", "function")
+                toolWrapper.put("function", JSONObject(toolDefinitionJson))
+                tools.put(toolWrapper)
                 root.put("tools", tools)
             } else {
                 // Default: output_translations tool for translation pipeline
