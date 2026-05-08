@@ -2,531 +2,305 @@ package com.mtt.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mtt.app.data.model.LlmProvider
-import com.mtt.app.data.model.ModelInfo
-import com.mtt.app.data.remote.llm.LlmServiceFactory
-import com.mtt.app.data.remote.llm.ModelRegistry
-import com.mtt.app.data.remote.anthropic.AnthropicClient
-import com.mtt.app.data.remote.openai.OpenAiClient
+import com.mtt.app.core.error.Result
+import com.mtt.app.data.model.ChannelConfig
+import com.mtt.app.data.model.ChannelType
+import com.mtt.app.data.model.FetchedModel
+import com.mtt.app.data.remote.ModelFetcher
 import com.mtt.app.data.security.SecureStorage
-import com.mtt.app.data.network.HttpClientFactory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
+import java.util.UUID
 import javax.inject.Inject
 
 /**
  * ViewModel for SettingsScreen.
- * Manages API key, model, and proxy configuration for OpenAI and Anthropic providers.
+ *
+ * Manages a multi-channel LLM provider system:
+ * - Add/edit/delete arbitrary LLM channels (OpenAI/Anthropic)
+ * - Fetch available models from each channel's API
+ * - Set active channel and active model
+ * - Configure batch size and concurrency for translation pipeline
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
-    private val httpClientFactory: HttpClientFactory
+    private val modelFetcher: ModelFetcher
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
-        loadCustomModels()
+        loadChannels()
         loadSettings()
     }
 
+    // ── Data Loading ──────────────────────────────
+
     /**
-     * Load custom models from SecureStorage and populate ModelRegistry.
+     * Load channels and active IDs from SecureStorage.
      */
-    private fun loadCustomModels() {
-        val json = secureStorage.getCustomModels()
-        if (json != null) {
-            try {
-                val models = parseCustomModelsJson(json)
-                ModelRegistry.initCustomModels(models)
-            } catch (_: Exception) {
-                // If JSON parsing fails, just use defaults
-            }
-        }
+    fun loadChannels() {
+        val channels = secureStorage.loadChannels()
+        val activeChannelId = secureStorage.loadActiveChannelId()
+        val activeModelId = secureStorage.loadActiveModelId() ?: ""
+        _uiState.update { it.copy(
+            channels = channels,
+            activeChannelId = activeChannelId,
+            activeModelId = activeModelId
+        )}
     }
 
     /**
-     * Parse custom models from saved JSON string.
+     * Load pipeline settings (batch size, concurrency) from SecureStorage.
      */
-    private fun parseCustomModelsJson(json: String): List<ModelInfo> {
-        val models = mutableListOf<ModelInfo>()
-        val arr = JSONArray(json)
-        for (i in 0 until arr.length()) {
-            val obj = arr.getJSONObject(i)
-            val modelId = obj.getString("modelId")
-            val displayName = obj.optString("displayName", modelId)
-            val contextWindow = obj.optInt("contextWindow", 128000)
-            val providerName = obj.optString("provider", "openai")
-            val provider = if (providerName == "anthropic") {
-                LlmProvider.Anthropic("", "")
-            } else {
-                LlmProvider.OpenAI("", "")
-            }
-            models.add(ModelRegistry.createCustom(modelId, displayName, contextWindow, provider))
-        }
-        return models
-    }
-
-    /**
-     * Serialize custom models to JSON string for persistence.
-     */
-    private fun serializeCustomModels(): String {
-        val arr = JSONArray()
-        for (model in ModelRegistry.customModels) {
-            val obj = JSONObject()
-            obj.put("modelId", model.modelId)
-            obj.put("displayName", model.displayName)
-            obj.put("contextWindow", model.contextWindow)
-            obj.put("provider", if (model.provider is LlmProvider.Anthropic) "anthropic" else "openai")
-            arr.put(obj)
-        }
-        return arr.toString()
-    }
-
-    /**
-     * Load saved settings from SecureStorage.
-     */
-    private fun loadSettings() {
-        val openAiKey = secureStorage.getApiKey(SecureStorage.PROVIDER_OPENAI) ?: ""
-        val anthropicKey = secureStorage.getApiKey(SecureStorage.PROVIDER_ANTHROPIC) ?: ""
-        
-        val openAiModels = ModelRegistry.getByProvider(LlmProvider.OpenAI("", ""))
-        val anthropicModels = ModelRegistry.getByProvider(LlmProvider.Anthropic("", ""))
-        
-        // Use getApiKey for backward compatibility (getApiKey transforms "openai_model" -> "key_openai_model")
-        val savedOpenAiModelId = secureStorage.getApiKey(SecureStorage.KEY_OPENAI_MODEL)
-            ?: ModelRegistry.defaultOpenAiModel.modelId
-        val savedAnthropicModelId = secureStorage.getApiKey(SecureStorage.KEY_ANTHROPIC_MODEL)
-            ?: ModelRegistry.defaultAnthropicModel.modelId
-        
-        val selectedOpenAiModel = openAiModels.find { it.modelId == savedOpenAiModelId }
-            ?: ModelRegistry.defaultOpenAiModel
-        val selectedAnthropicModel = anthropicModels.find { it.modelId == savedAnthropicModelId }
-            ?: ModelRegistry.defaultAnthropicModel
-        
-        val savedBatchSize = secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE)
+    fun loadSettings() {
+        val batchSize = secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE)
             ?.toIntOrNull() ?: 50
-        val savedConcurrency = secureStorage.getValue(SecureStorage.KEY_CONCURRENCY)
+        val concurrency = secureStorage.getValue(SecureStorage.KEY_CONCURRENCY)
             ?.toIntOrNull() ?: 1
-
-        _uiState.update { state ->
-            state.copy(
-                batchSize = savedBatchSize.coerceIn(1, 200),
-                concurrency = savedConcurrency.coerceIn(1, 10),
-                openAiSettings = ProviderSettings(
-                    apiKey = openAiKey,
-                    baseUrl = secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) ?: "https://api.deepseek.com",
-                    selectedModel = selectedOpenAiModel,
-                    availableModels = openAiModels,
-                    defaultModel = ModelRegistry.defaultOpenAiModel,
-                    defaultBaseUrl = "https://api.openai.com/v1"
-                ),
-                anthropicSettings = ProviderSettings(
-                    apiKey = anthropicKey,
-                    baseUrl = secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL) ?: "https://api.anthropic.com",
-                    selectedModel = selectedAnthropicModel,
-                    availableModels = anthropicModels,
-                    defaultModel = ModelRegistry.defaultAnthropicModel,
-                    defaultBaseUrl = "https://api.anthropic.com"
-                )
-            )
-        }
+        _uiState.update { it.copy(
+            batchSize = batchSize.coerceIn(1, 200),
+            concurrency = concurrency.coerceIn(1, 10)
+        )}
     }
 
     /**
-     * Refresh available models list (e.g., after adding a custom model).
-     */
-    private fun refreshModels() {
-        val openAiModels = ModelRegistry.getByProvider(LlmProvider.OpenAI("", ""))
-        val anthropicModels = ModelRegistry.getByProvider(LlmProvider.Anthropic("", ""))
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(availableModels = openAiModels),
-                anthropicSettings = state.anthropicSettings.copy(availableModels = anthropicModels)
-            )
-        }
-    }
-
-    /**
-     * Update OpenAI API key.
-     */
-    fun updateOpenAiApiKey(key: String) {
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(
-                    apiKey = key,
-                    apiKeyError = validateApiKey(key)
-                )
-            )
-        }
-    }
-
-    /**
-     * Update OpenAI Base URL.
-     */
-    fun updateOpenAiBaseUrl(url: String) {
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(
-                    baseUrl = url,
-                    baseUrlError = validateUrl(url)
-                )
-            )
-        }
-    }
-
-    /**
-     * Update OpenAI selected model.
-     * Supports both preset and custom model selection by modelId string.
-     */
-    fun updateOpenAiModel(model: ModelInfo) {
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(
-                    selectedModel = model
-                )
-            )
-        }
-    }
-
-    /**
-     * Update OpenAI selected model by modelId (used when user types a custom model name).
-     * If the modelId matches a known model, use that. Otherwise create a custom ModelInfo.
-     */
-    fun updateOpenAiModelById(modelId: String) {
-        val existing = ModelRegistry.allModels.firstOrNull { it.modelId == modelId }
-        if (existing != null && existing.provider is LlmProvider.OpenAI) {
-            updateOpenAiModel(existing)
-        } else {
-            // Create a custom/openai ModelInfo or find existing one
-            val custom = ModelRegistry.customModels.firstOrNull {
-                it.modelId == modelId && it.provider is LlmProvider.OpenAI
-            }
-            if (custom != null) {
-                updateOpenAiModel(custom)
-            } else if (modelId.isNotBlank()) {
-                // Create temporary custom model in-memory
-                val newModel = ModelRegistry.createCustom(
-                    modelId = modelId,
-                    displayName = modelId,
-                    provider = LlmProvider.OpenAI("", "")
-                )
-                updateOpenAiModel(newModel)
-            }
-        }
-    }
-
-    /**
-     * Update Anthropic API key.
-     */
-    fun updateAnthropicApiKey(key: String) {
-        _uiState.update { state ->
-            state.copy(
-                anthropicSettings = state.anthropicSettings.copy(
-                    apiKey = key,
-                    apiKeyError = validateApiKey(key)
-                )
-            )
-        }
-    }
-
-    /**
-     * Update Anthropic Base URL.
-     */
-    fun updateAnthropicBaseUrl(url: String) {
-        _uiState.update { state ->
-            state.copy(
-                anthropicSettings = state.anthropicSettings.copy(
-                    baseUrl = url,
-                    baseUrlError = validateUrl(url)
-                )
-            )
-        }
-    }
-
-    /**
-     * Update Anthropic selected model.
-     */
-    fun updateAnthropicModel(model: ModelInfo) {
-        _uiState.update { state ->
-            state.copy(
-                anthropicSettings = state.anthropicSettings.copy(
-                    selectedModel = model
-                )
-            )
-        }
-    }
-
-    /**
-     * Update Anthropic selected model by modelId (used when user types a custom model name).
-     */
-    fun updateAnthropicModelById(modelId: String) {
-        val existing = ModelRegistry.allModels.firstOrNull { it.modelId == modelId }
-        if (existing != null && existing.provider is LlmProvider.Anthropic) {
-            updateAnthropicModel(existing)
-        } else {
-            val custom = ModelRegistry.customModels.firstOrNull {
-                it.modelId == modelId && it.provider is LlmProvider.Anthropic
-            }
-            if (custom != null) {
-                updateAnthropicModel(custom)
-            } else if (modelId.isNotBlank()) {
-                val newModel = ModelRegistry.createCustom(
-                    modelId = modelId,
-                    displayName = modelId,
-                    provider = LlmProvider.Anthropic("", "")
-                )
-                updateAnthropicModel(newModel)
-            }
-        }
-    }
-
-    /**
-     * Toggle OpenAI API key visibility.
-     */
-    fun toggleOpenAiKeyVisibility() {
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(
-                    isKeyVisible = !state.openAiSettings.isKeyVisible
-                )
-            )
-        }
-    }
-
-    /**
-     * Toggle Anthropic API key visibility.
-     */
-    fun toggleAnthropicKeyVisibility() {
-        _uiState.update { state ->
-            state.copy(
-                anthropicSettings = state.anthropicSettings.copy(
-                    isKeyVisible = !state.anthropicSettings.isKeyVisible
-                )
-            )
-        }
-    }
-
-    // ── Custom Model Management ────────────────────
-
-    /**
-     * Add a custom model with the given parameters and persist it.
-     */
-    fun addCustomModel(modelId: String, displayName: String, contextWindow: Int, isAnthropic: Boolean) {
-        val provider = if (isAnthropic) LlmProvider.Anthropic("", "") else LlmProvider.OpenAI("", "")
-        val model = ModelRegistry.createCustom(modelId, displayName, contextWindow, provider)
-        ModelRegistry.addCustomModel(model)
-        saveCustomModels()
-        refreshModels()
-        // Auto-select the newly added model
-        if (isAnthropic) {
-            updateAnthropicModel(model)
-        } else {
-            updateOpenAiModel(model)
-        }
-    }
-
-    /**
-     * Remove a custom model and persist the change.
-     */
-    fun removeCustomModel(modelId: String) {
-        ModelRegistry.removeCustomModel(modelId)
-        saveCustomModels()
-        refreshModels()
-    }
-
-    /**
-     * Persist custom models to SecureStorage.
-     */
-    private fun saveCustomModels() {
-        val json = serializeCustomModels()
-        secureStorage.saveCustomModels(json)
-    }
-
-    // ── Test Connection ───────────────────────────
-
-    /**
-     * Test OpenAI connection.
-     */
-    fun testOpenAiConnection() {
-        val settings = _uiState.value.openAiSettings
-        
-        if (settings.apiKey.isBlank()) {
-            _uiState.update { state ->
-                state.copy(
-                    openAiSettings = state.openAiSettings.copy(
-                        testConnectionState = TestConnectionState.Error("API key is required")
-                    )
-                )
-            }
-            return
-        }
-        
-        if (settings.baseUrlError != null) {
-            _uiState.update { state ->
-                state.copy(
-                    openAiSettings = state.openAiSettings.copy(
-                        testConnectionState = TestConnectionState.Error("Invalid Base URL")
-                    )
-                )
-            }
-            return
-        }
-        
-        _uiState.update { state ->
-            state.copy(
-                openAiSettings = state.openAiSettings.copy(
-                    testConnectionState = TestConnectionState.Testing
-                )
-            )
-        }
-        
-        viewModelScope.launch {
-            try {
-                val okHttpClient = httpClientFactory.createBaseClient(debugMode = true).build()
-                val openAiClient = OpenAiClient(okHttpClient, settings.apiKey, settings.baseUrl)
-                val anthropicClient = AnthropicClient(okHttpClient, "", settings.baseUrl)
-                
-                val provider = LlmProvider.OpenAI(settings.apiKey, settings.baseUrl)
-                val service = LlmServiceFactory.create(provider, openAiClient, anthropicClient)
-                val result = service.testConnection(settings.selectedModel.modelId)
-                
-                _uiState.update { state ->
-                    state.copy(
-                        openAiSettings = state.openAiSettings.copy(
-                            testConnectionState = if (result) {
-                                TestConnectionState.Success("Connection successful")
-                            } else {
-                                TestConnectionState.Error("Connection failed")
-                            }
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update { state ->
-                    state.copy(
-                        openAiSettings = state.openAiSettings.copy(
-                            testConnectionState = TestConnectionState.Error(
-                                e.message ?: "Unknown error occurred"
-                            )
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Test Anthropic connection.
-     */
-    fun testAnthropicConnection() {
-        val settings = _uiState.value.anthropicSettings
-        
-        if (settings.apiKey.isBlank()) {
-            _uiState.update { state ->
-                state.copy(
-                    anthropicSettings = state.anthropicSettings.copy(
-                        testConnectionState = TestConnectionState.Error("API key is required")
-                    )
-                )
-            }
-            return
-        }
-        
-        if (settings.baseUrlError != null) {
-            _uiState.update { state ->
-                state.copy(
-                    anthropicSettings = state.anthropicSettings.copy(
-                        testConnectionState = TestConnectionState.Error("Invalid Base URL")
-                    )
-                )
-            }
-            return
-        }
-        
-        _uiState.update { state ->
-            state.copy(
-                anthropicSettings = state.anthropicSettings.copy(
-                    testConnectionState = TestConnectionState.Testing
-                )
-            )
-        }
-        
-        viewModelScope.launch {
-            try {
-                val okHttpClient = httpClientFactory.createBaseClient(debugMode = true).build()
-                val openAiClient = OpenAiClient(okHttpClient, "", settings.baseUrl)
-                val anthropicClient = AnthropicClient(okHttpClient, settings.apiKey, settings.baseUrl)
-                
-                val provider = LlmProvider.Anthropic(settings.apiKey, settings.baseUrl)
-                val service = LlmServiceFactory.create(provider, openAiClient, anthropicClient)
-                val result = service.testConnection(settings.selectedModel.modelId)
-                
-                _uiState.update { state ->
-                    state.copy(
-                        anthropicSettings = state.anthropicSettings.copy(
-                            testConnectionState = if (result) {
-                                TestConnectionState.Success("Connection successful")
-                            } else {
-                                TestConnectionState.Error("Connection failed")
-                            }
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update { state ->
-                    state.copy(
-                        anthropicSettings = state.anthropicSettings.copy(
-                            testConnectionState = TestConnectionState.Error(
-                                e.message ?: "Unknown error occurred"
-                            )
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Save settings to SecureStorage.
-     * Called when leaving the settings screen.
+     * Persist pipeline settings to SecureStorage.
+     * Called via DisposableEffect on screen exit.
      */
     fun saveSettings() {
         val state = _uiState.value
-        
-        // Save OpenAI settings
-        if (state.openAiSettings.apiKey.isNotBlank()) {
-            secureStorage.saveApiKey(SecureStorage.PROVIDER_OPENAI, state.openAiSettings.apiKey)
-        } else {
-            secureStorage.clearApiKey(SecureStorage.PROVIDER_OPENAI)
-        }
-        // Use saveApiKey for backward compatibility (transform "openai_model" -> "key_openai_model")
-        secureStorage.saveApiKey(SecureStorage.KEY_OPENAI_MODEL, state.openAiSettings.selectedModel.modelId)
-        secureStorage.saveValue(SecureStorage.KEY_OPENAI_BASE_URL, state.openAiSettings.baseUrl)
-        
-        // Save Anthropic settings
-        if (state.anthropicSettings.apiKey.isNotBlank()) {
-            secureStorage.saveApiKey(SecureStorage.PROVIDER_ANTHROPIC, state.anthropicSettings.apiKey)
-        } else {
-            secureStorage.clearApiKey(SecureStorage.PROVIDER_ANTHROPIC)
-        }
-        secureStorage.saveApiKey(SecureStorage.KEY_ANTHROPIC_MODEL, state.anthropicSettings.selectedModel.modelId)
-        secureStorage.saveValue(SecureStorage.KEY_ANTHROPIC_BASE_URL, state.anthropicSettings.baseUrl)
-        
-        // Save custom models
-        saveCustomModels()
-
-        // Save pipeline config
         secureStorage.saveValue(SecureStorage.KEY_BATCH_SIZE, state.batchSize.toString())
         secureStorage.saveValue(SecureStorage.KEY_CONCURRENCY, state.concurrency.toString())
+    }
+
+    // ── Active Config ─────────────────────────────
+
+    /**
+     * Set the active channel and persist.
+     */
+    fun setActiveChannel(id: String) {
+        secureStorage.saveActiveChannelId(id)
+        _uiState.update { it.copy(activeChannelId = id) }
+    }
+
+    /**
+     * Set the active model and persist.
+     */
+    fun setActiveModel(modelId: String) {
+        secureStorage.saveActiveModelId(modelId)
+        _uiState.update { it.copy(activeModelId = modelId) }
+    }
+
+    // ── Channel CRUD ──────────────────────────────
+
+    /**
+     * Toggle the "add channel" dialog visibility.
+     */
+    fun toggleAddChannel() {
+        val wasAdding = _uiState.value.isAddingChannel
+        _uiState.update { it.copy(
+            isAddingChannel = !it.isAddingChannel,
+            newChannelForm = if (wasAdding) it.newChannelForm else ChannelFormState()
+        )}
+    }
+
+    /**
+     * Start editing an existing channel — populate form from channel data.
+     */
+    fun startEditChannel(id: String) {
+        val channel = _uiState.value.channels.find { it.id == id } ?: return
+        _uiState.update { it.copy(
+            editingChannelId = id,
+            newChannelForm = ChannelFormState(
+                name = channel.name,
+                type = channel.type,
+                baseUrl = channel.baseUrl,
+                apiKey = channel.apiKey,
+                apiKeyVisible = false
+            )
+        )}
+    }
+
+    /**
+     * Cancel the edit channel dialog.
+     */
+    fun cancelEditChannel() {
+        _uiState.update { it.copy(
+            editingChannelId = null,
+            newChannelForm = ChannelFormState()
+        )}
+    }
+
+    // ── Form Field Updates ────────────────────────
+
+    fun updateFormName(name: String) {
+        _uiState.update { it.copy(
+            newChannelForm = it.newChannelForm.copy(name = name)
+        )}
+    }
+
+    fun updateFormType(type: ChannelType) {
+        _uiState.update { it.copy(
+            newChannelForm = it.newChannelForm.copy(type = type)
+        )}
+    }
+
+    fun updateFormBaseUrl(url: String) {
+        _uiState.update { it.copy(
+            newChannelForm = it.newChannelForm.copy(baseUrl = url)
+        )}
+    }
+
+    fun updateFormApiKey(key: String) {
+        _uiState.update { it.copy(
+            newChannelForm = it.newChannelForm.copy(apiKey = key)
+        )}
+    }
+
+    fun toggleFormApiKeyVisibility() {
+        _uiState.update { it.copy(
+            newChannelForm = it.newChannelForm.copy(
+                apiKeyVisible = !it.newChannelForm.apiKeyVisible
+            )
+        )}
+    }
+
+    // ── Add / Update / Delete Channel ─────────────
+
+    /**
+     * Add a new channel from the form state.
+     * Validates required fields, creates a ChannelConfig, persists.
+     */
+    fun addChannel() {
+        val form = _uiState.value.newChannelForm
+        if (form.name.isBlank() || form.baseUrl.isBlank() || form.apiKey.isBlank()) {
+            _uiState.update { it.copy(
+                globalMessage = "请填写所有必填项（名称、URL、API Key）"
+            )}
+            return
+        }
+
+        val newChannel = ChannelConfig(
+            id = UUID.randomUUID().toString(),
+            name = form.name.trim(),
+            type = form.type,
+            baseUrl = form.baseUrl.trimEnd('/'),
+            apiKey = form.apiKey.trim(),
+            fetchedModels = emptyList(),
+            fetchedAt = null
+        )
+
+        val updatedChannels = _uiState.value.channels + newChannel
+        secureStorage.saveChannels(updatedChannels)
+        _uiState.update { it.copy(
+            channels = updatedChannels,
+            isAddingChannel = false,
+            newChannelForm = ChannelFormState(),
+            globalMessage = "渠道 \"${newChannel.name}\" 已添加"
+        )}
+    }
+
+    /**
+     * Update an existing channel from the form state.
+     */
+    fun updateChannel(id: String) {
+        val form = _uiState.value.newChannelForm
+        if (form.name.isBlank() || form.baseUrl.isBlank() || form.apiKey.isBlank()) {
+            _uiState.update { it.copy(
+                globalMessage = "请填写所有必填项（名称、URL、API Key）"
+            )}
+            return
+        }
+
+        val updatedChannels = _uiState.value.channels.map { channel ->
+            if (channel.id == id) {
+                channel.copy(
+                    name = form.name.trim(),
+                    type = form.type,
+                    baseUrl = form.baseUrl.trimEnd('/'),
+                    apiKey = form.apiKey.trim()
+                )
+            } else {
+                channel
+            }
+        }
+        secureStorage.saveChannels(updatedChannels)
+        _uiState.update { it.copy(
+            channels = updatedChannels,
+            editingChannelId = null,
+            newChannelForm = ChannelFormState(),
+            globalMessage = "渠道 \"${form.name.trim()}\" 已更新"
+        )}
+    }
+
+    /**
+     * Delete a channel by ID. Clears active channel if the deleted one was active.
+     */
+    fun deleteChannel(id: String) {
+        val channel = _uiState.value.channels.find { it.id == id }
+        val updatedChannels = _uiState.value.channels.filter { it.id != id }
+        secureStorage.saveChannels(updatedChannels)
+
+        val newActiveId = if (_uiState.value.activeChannelId == id) {
+            secureStorage.saveActiveChannelId("")
+            null
+        } else {
+            _uiState.value.activeChannelId
+        }
+
+        _uiState.update { it.copy(
+            channels = updatedChannels,
+            activeChannelId = newActiveId,
+            globalMessage = channel?.let { "渠道 \"${it.name}\" 已删除" }
+        )}
+    }
+
+    // ── Model Fetching ────────────────────────────
+
+    /**
+     * Fetch available models for a specific channel via ModelFetcher.
+     * Updates both the fetch state and the channel's fetchedModels list.
+     */
+    fun fetchModelsForChannel(channelId: String) {
+        val channel = _uiState.value.channels.find { it.id == channelId } ?: return
+        _uiState.update { it.copy(
+            modelFetchStates = it.modelFetchStates + (channelId to FetchState.Fetching)
+        )}
+
+        viewModelScope.launch {
+            when (val result = modelFetcher.fetchModels(channel)) {
+                is Result.Success -> {
+                    val models = result.data
+                    val updatedChannel = channel.copy(
+                        fetchedModels = models,
+                        fetchedAt = System.currentTimeMillis()
+                    )
+                    val updatedChannels = _uiState.value.channels.map {
+                        if (it.id == channelId) updatedChannel else it
+                    }
+                    secureStorage.saveChannels(updatedChannels)
+                    _uiState.update { it.copy(
+                        channels = updatedChannels,
+                        modelFetchStates = it.modelFetchStates + (channelId to FetchState.Success(models))
+                    )}
+                }
+                is Result.Failure -> {
+                    _uiState.update { it.copy(
+                        modelFetchStates = it.modelFetchStates + (
+                            channelId to FetchState.Error(result.exception.userMessage)
+                        ),
+                        globalMessage = "获取模型失败: ${result.exception.userMessage}"
+                    )}
+                }
+            }
+        }
     }
 
     // ── Pipeline Config ───────────────────────────
@@ -534,101 +308,78 @@ class SettingsViewModel @Inject constructor(
     /**
      * Update batch size (texts per API call).
      */
-    fun updateBatchSize(size: Int) {
+    fun onBatchSizeChange(size: Int) {
         _uiState.update { it.copy(batchSize = size.coerceIn(1, 200)) }
     }
 
     /**
      * Update concurrency (parallel batches).
      */
-    fun updateConcurrency(count: Int) {
-        _uiState.update { it.copy(concurrency = count.coerceIn(1, 10)) }
+    fun onConcurrencyChange(conc: Int) {
+        _uiState.update { it.copy(concurrency = conc.coerceIn(1, 10)) }
     }
 
-    /**
-     * Validate API key format.
-     * @return Error message or null if valid
-     */
-    private fun validateApiKey(key: String): String? {
-        return if (key.isBlank()) {
-            "API key cannot be empty"
-        } else {
-            null
-        }
-    }
+    // ── Global Message ────────────────────────────
 
     /**
-     * Validate URL format.
-     * @return Error message or null if valid
+     * Clear the global snackbar message after display.
      */
-    private fun validateUrl(url: String): String? {
-        if (url.isBlank()) {
-            return "URL cannot be empty"
-        }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            return "URL must start with http:// or https://"
-        }
-        return try {
-            val uri = java.net.URI(url)
-            if (uri.host.isNullOrBlank()) {
-                "URL must have a valid host"
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            "URL must have a valid host"
-        }
+    fun clearMessage() {
+        _uiState.update { it.copy(globalMessage = null) }
     }
 }
 
+// ── UI State ──────────────────────────────────────
+
 /**
- * UI state for SettingsScreen.
+ * UI state for the channel-based settings screen.
  */
 data class SettingsUiState(
-    val openAiSettings: ProviderSettings = ProviderSettings.createOpenAiSettings(),
-    val anthropicSettings: ProviderSettings = ProviderSettings.createAnthropicSettings(),
+    /** All configured LLM channels. */
+    val channels: List<ChannelConfig> = emptyList(),
+    /** Currently active channel ID (for translation). */
+    val activeChannelId: String? = null,
+    /** Currently active model ID (for translation). */
+    val activeModelId: String = "",
+    /** Whether the "add channel" dialog is visible. */
+    val isAddingChannel: Boolean = false,
+    /** Channel ID currently being edited (null if not editing). */
+    val editingChannelId: String? = null,
+    /** Form state for add/edit channel dialog. */
+    val newChannelForm: ChannelFormState = ChannelFormState(),
+    /** Model fetch states keyed by channel ID. */
+    val modelFetchStates: Map<String, FetchState> = emptyMap(),
+    /** Translation pipeline: texts per API call. */
     val batchSize: Int = 50,
-    val concurrency: Int = 1
+    /** Translation pipeline: parallel API calls. */
+    val concurrency: Int = 1,
+    /** Global Snackbar message (null = no message). */
+    val globalMessage: String? = null
 )
 
 /**
- * Provider settings state (common for OpenAI and Anthropic).
+ * Form state for adding/editing a channel.
  */
-data class ProviderSettings(
+data class ChannelFormState(
+    val name: String = "",
+    val type: ChannelType = ChannelType.OPENAI,
+    val baseUrl: String = "",
     val apiKey: String = "",
-    val apiKeyError: String? = null,
-    val baseUrl: String,
-    val baseUrlError: String? = null,
-    val selectedModel: ModelInfo,
-    val availableModels: List<ModelInfo> = emptyList(),
-    val isKeyVisible: Boolean = false,
-    val testConnectionState: TestConnectionState = TestConnectionState.Idle,
-    val defaultModel: ModelInfo,
-    val defaultBaseUrl: String
-) {
-    companion object {
-        fun createOpenAiSettings(): ProviderSettings = ProviderSettings(
-            baseUrl = "https://api.deepseek.com",
-            selectedModel = ModelRegistry.defaultOpenAiModel,
-            defaultModel = ModelRegistry.defaultOpenAiModel,
-            defaultBaseUrl = "https://api.deepseek.com"
-        )
-        
-        fun createAnthropicSettings(): ProviderSettings = ProviderSettings(
-            baseUrl = "https://api.anthropic.com",
-            selectedModel = ModelRegistry.defaultAnthropicModel,
-            defaultModel = ModelRegistry.defaultAnthropicModel,
-            defaultBaseUrl = "https://api.anthropic.com"
-        )
-    }
-}
+    val apiKeyVisible: Boolean = false,
+    val fetchingModels: Boolean = false,
+    val fetchedCount: Int = 0
+)
 
 /**
- * Test connection state.
+ * Model fetch progress state for a specific channel.
  */
-sealed class TestConnectionState {
-    object Idle : TestConnectionState()
-    object Testing : TestConnectionState()
-    data class Success(val message: String) : TestConnectionState()
-    data class Error(val message: String) : TestConnectionState()
+sealed class FetchState {
+    /** No fetch has been requested yet. */
+    object Idle : FetchState()
+    /** Currently fetching models from the API. */
+    object Fetching : FetchState()
+    /** Models fetched successfully. */
+    data class Success(val models: List<FetchedModel>) : FetchState()
+    /** Fetch failed with error message. */
+    data class Error(val message: String) : FetchState()
 }

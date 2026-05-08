@@ -1,9 +1,10 @@
 package com.mtt.app.ui.settings
 
-import com.mtt.app.data.model.ModelInfo
-import com.mtt.app.data.remote.llm.ModelRegistry
+import com.mtt.app.data.model.ChannelConfig
+import com.mtt.app.data.model.ChannelType
+import com.mtt.app.data.model.FetchedModel
+import com.mtt.app.data.remote.ModelFetcher
 import com.mtt.app.data.security.SecureStorage
-import com.mtt.app.data.network.HttpClientFactory
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -31,24 +32,25 @@ import org.robolectric.annotation.Config
 class SettingsViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
-    
+
     private lateinit var secureStorage: SecureStorage
-    private lateinit var httpClientFactory: HttpClientFactory
+    private lateinit var modelFetcher: ModelFetcher
     private lateinit var viewModel: SettingsViewModel
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        
+
         secureStorage = mockk(relaxed = true)
-        httpClientFactory = mockk(relaxed = true)
-        
+        modelFetcher = mockk(relaxed = true)
+
         // Mock empty storage by default
-        every { secureStorage.getApiKey(any()) } returns null
+        every { secureStorage.loadChannels() } returns emptyList()
+        every { secureStorage.loadActiveChannelId() } returns null
+        every { secureStorage.loadActiveModelId() } returns null
         every { secureStorage.getValue(any()) } returns null
-        every { secureStorage.getCustomModels() } returns null
-        
-        viewModel = SettingsViewModel(secureStorage, httpClientFactory)
+
+        viewModel = SettingsViewModel(secureStorage, modelFetcher)
     }
 
     @After
@@ -57,276 +59,389 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `initial state loads empty settings`() {
+    fun `initial state has empty channels`() {
         val state = viewModel.uiState.value
-        
-        assertEquals("", state.openAiSettings.apiKey)
-        assertEquals("https://api.deepseek.com", state.openAiSettings.baseUrl)
-        assertEquals(ModelRegistry.defaultOpenAiModel, state.openAiSettings.selectedModel)
-        assertTrue(state.openAiSettings.availableModels.isNotEmpty())
-        
-        assertEquals("", state.anthropicSettings.apiKey)
-        assertEquals("https://api.anthropic.com", state.anthropicSettings.baseUrl)
-        assertEquals(ModelRegistry.defaultAnthropicModel, state.anthropicSettings.selectedModel)
-        assertTrue(state.anthropicSettings.availableModels.isNotEmpty())
+
+        assertTrue(state.channels.isEmpty())
+        assertNull(state.activeChannelId)
+        assertEquals("", state.activeModelId)
+        assertFalse(state.isAddingChannel)
+        assertNull(state.editingChannelId)
+        assertEquals(50, state.batchSize)
+        assertEquals(1, state.concurrency)
     }
 
     @Test
-    fun `initial state loads saved settings`() {
-        every { secureStorage.getApiKey("openai") } returns "saved-openai-key"
-        every { secureStorage.getApiKey("anthropic") } returns "saved-anthropic-key"
-        every { secureStorage.getApiKey("openai_model") } returns "gpt-4o"
-        every { secureStorage.getApiKey("anthropic_model") } returns "claude-3-5-sonnet-20241022"
-        every { secureStorage.getValue(SecureStorage.KEY_OPENAI_BASE_URL) } returns "https://api.openai.com/v1"
-        every { secureStorage.getValue(SecureStorage.KEY_ANTHROPIC_BASE_URL) } returns "https://api.anthropic.com"
-        
-        val viewModel = SettingsViewModel(secureStorage, httpClientFactory)
-        val state = viewModel.uiState.value
-        
-        assertEquals("saved-openai-key", state.openAiSettings.apiKey)
-        assertEquals("gpt-4o", state.openAiSettings.selectedModel.modelId)
-        assertEquals("https://api.openai.com/v1", state.openAiSettings.baseUrl)
-        
-        assertEquals("saved-anthropic-key", state.anthropicSettings.apiKey)
-        assertEquals("claude-3-5-sonnet-20241022", state.anthropicSettings.selectedModel.modelId)
-        assertEquals("https://api.anthropic.com", state.anthropicSettings.baseUrl)
-    }
-
-    @Test
-    fun `updateOpenAiApiKey updates state and validates`() {
-        viewModel.updateOpenAiApiKey("test-key")
-        
-        val state = viewModel.uiState.value
-        assertEquals("test-key", state.openAiSettings.apiKey)
-        assertNull(state.openAiSettings.apiKeyError)
-    }
-
-    @Test
-    fun `updateOpenAiApiKey shows error for empty key`() {
-        viewModel.updateOpenAiApiKey("")
-        
-        val state = viewModel.uiState.value
-        assertEquals("", state.openAiSettings.apiKey)
-        assertEquals("API key cannot be empty", state.openAiSettings.apiKeyError)
-    }
-
-    @Test
-    fun `updateOpenAiBaseUrl updates state and validates`() {
-        viewModel.updateOpenAiBaseUrl("https://custom.openai.com/v1")
-        
-        val state = viewModel.uiState.value
-        assertEquals("https://custom.openai.com/v1", state.openAiSettings.baseUrl)
-        assertNull(state.openAiSettings.baseUrlError)
-    }
-
-    @Test
-    fun `updateOpenAiBaseUrl shows error for invalid URL`() {
-        viewModel.updateOpenAiBaseUrl("not-a-url")
-        
-        val state = viewModel.uiState.value
-        assertEquals("not-a-url", state.openAiSettings.baseUrl)
-        assertEquals("URL must start with http:// or https://", state.openAiSettings.baseUrlError)
-    }
-
-    @Test
-    fun `updateOpenAiBaseUrl shows error for URL without host`() {
-        viewModel.updateOpenAiBaseUrl("https://")
-        
-        val state = viewModel.uiState.value
-        assertEquals("https://", state.openAiSettings.baseUrl)
-        assertEquals("URL must have a valid host", state.openAiSettings.baseUrlError)
-    }
-
-    @Test
-    fun `updateOpenAiModel updates selected model`() {
-        val newModel = ModelRegistry.GPT_4O
-        viewModel.updateOpenAiModel(newModel)
-        
-        val state = viewModel.uiState.value
-        assertEquals(newModel, state.openAiSettings.selectedModel)
-    }
-
-    @Test
-    fun `updateAnthropicApiKey updates state and validates`() {
-        viewModel.updateAnthropicApiKey("test-key")
-        
-        val state = viewModel.uiState.value
-        assertEquals("test-key", state.anthropicSettings.apiKey)
-        assertNull(state.anthropicSettings.apiKeyError)
-    }
-
-    @Test
-    fun `updateAnthropicApiKey shows error for empty key`() {
-        viewModel.updateAnthropicApiKey("")
-        
-        val state = viewModel.uiState.value
-        assertEquals("", state.anthropicSettings.apiKey)
-        assertEquals("API key cannot be empty", state.anthropicSettings.apiKeyError)
-    }
-
-    @Test
-    fun `updateAnthropicBaseUrl updates state and validates`() {
-        viewModel.updateAnthropicBaseUrl("https://custom.anthropic.com")
-        
-        val state = viewModel.uiState.value
-        assertEquals("https://custom.anthropic.com", state.anthropicSettings.baseUrl)
-        assertNull(state.anthropicSettings.baseUrlError)
-    }
-
-    @Test
-    fun `updateAnthropicBaseUrl shows error for invalid URL`() {
-        viewModel.updateAnthropicBaseUrl("ftp://invalid.com")
-        
-        val state = viewModel.uiState.value
-        assertEquals("ftp://invalid.com", state.anthropicSettings.baseUrl)
-        assertEquals("URL must start with http:// or https://", state.anthropicSettings.baseUrlError)
-    }
-
-    @Test
-    fun `updateAnthropicModel updates selected model`() {
-        val newModel = ModelRegistry.CLAUDE_SONNET
-        viewModel.updateAnthropicModel(newModel)
-        
-        val state = viewModel.uiState.value
-        assertEquals(newModel, state.anthropicSettings.selectedModel)
-    }
-
-    @Test
-    fun `toggleOpenAiKeyVisibility toggles visibility`() {
-        assertFalse(viewModel.uiState.value.openAiSettings.isKeyVisible)
-        
-        viewModel.toggleOpenAiKeyVisibility()
-        assertTrue(viewModel.uiState.value.openAiSettings.isKeyVisible)
-        
-        viewModel.toggleOpenAiKeyVisibility()
-        assertFalse(viewModel.uiState.value.openAiSettings.isKeyVisible)
-    }
-
-    @Test
-    fun `toggleAnthropicKeyVisibility toggles visibility`() {
-        assertFalse(viewModel.uiState.value.anthropicSettings.isKeyVisible)
-        
-        viewModel.toggleAnthropicKeyVisibility()
-        assertTrue(viewModel.uiState.value.anthropicSettings.isKeyVisible)
-        
-        viewModel.toggleAnthropicKeyVisibility()
-        assertFalse(viewModel.uiState.value.anthropicSettings.isKeyVisible)
-    }
-
-    @Test
-    fun `testOpenAiConnection shows error for empty API key`() = runTest {
-        viewModel.testOpenAiConnection()
-        advanceUntilIdle()
-        
-        val state = viewModel.uiState.value
-        assertTrue(state.openAiSettings.testConnectionState is TestConnectionState.Error)
-        assertEquals(
-            "API key is required",
-            (state.openAiSettings.testConnectionState as TestConnectionState.Error).message
+    fun `loadChannels loads saved channels from storage`() {
+        val savedChannels = listOf(
+            ChannelConfig(
+                id = "channel-1",
+                name = "OpenAI Channel",
+                type = ChannelType.OPENAI,
+                baseUrl = "https://api.openai.com/v1",
+                apiKey = "sk-test-key",
+                fetchedModels = listOf(
+                    FetchedModel("gpt-4o", "GPT-4o", 128000)
+                ),
+                fetchedAt = 1234567890
+            )
         )
+        every { secureStorage.loadChannels() } returns savedChannels
+        every { secureStorage.loadActiveChannelId() } returns "channel-1"
+        every { secureStorage.loadActiveModelId() } returns "gpt-4o"
+
+        viewModel.loadChannels()
+        val state = viewModel.uiState.value
+
+        assertEquals(1, state.channels.size)
+        assertEquals("channel-1", state.channels[0].id)
+        assertEquals("OpenAI Channel", state.channels[0].name)
+        assertEquals("channel-1", state.activeChannelId)
+        assertEquals("gpt-4o", state.activeModelId)
     }
 
     @Test
-    fun `testOpenAiConnection shows error for invalid URL`() = runTest {
-        viewModel.updateOpenAiApiKey("test-key")
-        viewModel.updateOpenAiBaseUrl("not-a-url")
-        
-        viewModel.testOpenAiConnection()
-        advanceUntilIdle()
-        
+    fun `loadSettings loads batch size and concurrency`() {
+        every { secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE) } returns "100"
+        every { secureStorage.getValue(SecureStorage.KEY_CONCURRENCY) } returns "5"
+
+        viewModel.loadSettings()
         val state = viewModel.uiState.value
-        assertTrue(state.openAiSettings.testConnectionState is TestConnectionState.Error)
-        assertEquals(
-            "Invalid Base URL",
-            (state.openAiSettings.testConnectionState as TestConnectionState.Error).message
+
+        assertEquals(100, state.batchSize)
+        assertEquals(5, state.concurrency)
+    }
+
+    @Test
+    fun `loadSettings uses defaults for invalid values`() {
+        every { secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE) } returns "invalid"
+        every { secureStorage.getValue(SecureStorage.KEY_CONCURRENCY) } returns "also-invalid"
+
+        viewModel.loadSettings()
+        val state = viewModel.uiState.value
+
+        assertEquals(50, state.batchSize)
+        assertEquals(1, state.concurrency)
+    }
+
+    @Test
+    fun `loadSettings clamps batch size to valid range`() {
+        every { secureStorage.getValue(SecureStorage.KEY_BATCH_SIZE) } returns "500"
+        every { secureStorage.getValue(SecureStorage.KEY_CONCURRENCY) } returns "0"
+
+        viewModel.loadSettings()
+        val state = viewModel.uiState.value
+
+        assertEquals(200, state.batchSize) // clamped to max
+        assertEquals(1, state.concurrency) // clamped to min
+    }
+
+    @Test
+    fun `saveSettings persists batch size and concurrency`() {
+        viewModel.onBatchSizeChange(100)
+        viewModel.onConcurrencyChange(5)
+
+        viewModel.saveSettings()
+
+        io.mockk.verify {
+            secureStorage.saveValue(SecureStorage.KEY_BATCH_SIZE, "100")
+            secureStorage.saveValue(SecureStorage.KEY_CONCURRENCY, "5")
+        }
+    }
+
+    @Test
+    fun `toggleAddChannel shows and hides add dialog`() {
+        assertFalse(viewModel.uiState.value.isAddingChannel)
+
+        viewModel.toggleAddChannel()
+        assertTrue(viewModel.uiState.value.isAddingChannel)
+        assertEquals("", viewModel.uiState.value.newChannelForm.name)
+
+        viewModel.toggleAddChannel()
+        assertFalse(viewModel.uiState.value.isAddingChannel)
+    }
+
+    @Test
+    fun `startEditChannel populates form with channel data`() {
+        val channel = ChannelConfig(
+            id = "channel-1",
+            name = "Test Channel",
+            type = ChannelType.ANTHROPIC,
+            baseUrl = "https://api.anthropic.com",
+            apiKey = "sk-test-key",
+            fetchedModels = emptyList(),
+            fetchedAt = null
         )
+        every { secureStorage.loadChannels() } returns listOf(channel)
+        viewModel.loadChannels()
+
+        viewModel.startEditChannel("channel-1")
+        val state = viewModel.uiState.value
+
+        assertEquals("channel-1", state.editingChannelId)
+        assertEquals("Test Channel", state.newChannelForm.name)
+        assertEquals(ChannelType.ANTHROPIC, state.newChannelForm.type)
+        assertEquals("https://api.anthropic.com", state.newChannelForm.baseUrl)
+        assertEquals("sk-test-key", state.newChannelForm.apiKey)
+        assertFalse(state.newChannelForm.apiKeyVisible)
     }
 
     @Test
-    fun `testAnthropicConnection shows error for empty API key`() = runTest {
-        viewModel.testAnthropicConnection()
-        advanceUntilIdle()
-        
-        val state = viewModel.uiState.value
-        assertTrue(state.anthropicSettings.testConnectionState is TestConnectionState.Error)
-        assertEquals(
-            "API key is required",
-            (state.anthropicSettings.testConnectionState as TestConnectionState.Error).message
+    fun `cancelEditChannel clears editing state`() {
+        val channel = ChannelConfig(
+            id = "channel-1",
+            name = "Test Channel",
+            type = ChannelType.OPENAI,
+            baseUrl = "https://api.openai.com/v1",
+            apiKey = "sk-test",
+            fetchedModels = emptyList(),
+            fetchedAt = null
         )
+        every { secureStorage.loadChannels() } returns listOf(channel)
+        viewModel.loadChannels()
+
+        viewModel.startEditChannel("channel-1")
+        viewModel.cancelEditChannel()
+        val state = viewModel.uiState.value
+
+        assertNull(state.editingChannelId)
+        assertEquals("", state.newChannelForm.name)
     }
 
     @Test
-    fun `testAnthropicConnection shows error for invalid URL`() = runTest {
-        viewModel.updateAnthropicApiKey("test-key")
-        viewModel.updateAnthropicBaseUrl("not-a-url")
-        
-        viewModel.testAnthropicConnection()
-        advanceUntilIdle()
-        
+    fun `updateFormName updates form name`() {
+        viewModel.toggleAddChannel()
+
+        viewModel.updateFormName("My Channel")
+        assertEquals("My Channel", viewModel.uiState.value.newChannelForm.name)
+    }
+
+    @Test
+    fun `updateFormType updates form type`() {
+        viewModel.toggleAddChannel()
+
+        viewModel.updateFormType(ChannelType.ANTHROPIC)
+        assertEquals(ChannelType.ANTHROPIC, viewModel.uiState.value.newChannelForm.type)
+    }
+
+    @Test
+    fun `updateFormBaseUrl updates form URL`() {
+        viewModel.toggleAddChannel()
+
+        viewModel.updateFormBaseUrl("https://custom.api.com/v1")
+        assertEquals("https://custom.api.com/v1", viewModel.uiState.value.newChannelForm.baseUrl)
+    }
+
+    @Test
+    fun `updateFormApiKey updates form key`() {
+        viewModel.toggleAddChannel()
+
+        viewModel.updateFormApiKey("sk-my-secret-key")
+        assertEquals("sk-my-secret-key", viewModel.uiState.value.newChannelForm.apiKey)
+    }
+
+    @Test
+    fun `toggleFormApiKeyVisibility toggles visibility`() {
+        viewModel.toggleAddChannel()
+        assertFalse(viewModel.uiState.value.newChannelForm.apiKeyVisible)
+
+        viewModel.toggleFormApiKeyVisibility()
+        assertTrue(viewModel.uiState.value.newChannelForm.apiKeyVisible)
+
+        viewModel.toggleFormApiKeyVisibility()
+        assertFalse(viewModel.uiState.value.newChannelForm.apiKeyVisible)
+    }
+
+    @Test
+    fun `addChannel adds new channel when form is valid`() {
+        viewModel.toggleAddChannel()
+        viewModel.updateFormName("New Channel")
+        viewModel.updateFormType(ChannelType.OPENAI)
+        viewModel.updateFormBaseUrl("https://api.openai.com/v1")
+        viewModel.updateFormApiKey("sk-new-key")
+
+        viewModel.addChannel()
+
         val state = viewModel.uiState.value
-        assertTrue(state.anthropicSettings.testConnectionState is TestConnectionState.Error)
-        assertEquals(
-            "Invalid Base URL",
-            (state.anthropicSettings.testConnectionState as TestConnectionState.Error).message
+        assertEquals(1, state.channels.size)
+        assertEquals("New Channel", state.channels[0].name)
+        assertEquals(ChannelType.OPENAI, state.channels[0].type)
+        assertEquals("https://api.openai.com/v1", state.channels[0].baseUrl)
+        assertEquals("sk-new-key", state.channels[0].apiKey)
+        assertFalse(state.isAddingChannel)
+        assertEquals("渠道 \"New Channel\" 已添加", state.globalMessage)
+    }
+
+    @Test
+    fun `addChannel shows error when form is incomplete`() {
+        viewModel.toggleAddChannel()
+        viewModel.updateFormName("") // Missing required fields
+
+        viewModel.addChannel()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.channels.isEmpty())
+        assertEquals("请填写所有必填项（名称、URL、API Key）", state.globalMessage)
+    }
+
+    @Test
+    fun `addChannel trims base URL trailing slash`() {
+        viewModel.toggleAddChannel()
+        viewModel.updateFormName("Trim Test")
+        viewModel.updateFormType(ChannelType.OPENAI)
+        viewModel.updateFormBaseUrl("https://api.openai.com/v1/")
+        viewModel.updateFormApiKey("sk-key")
+
+        viewModel.addChannel()
+
+        assertEquals("https://api.openai.com/v1", viewModel.uiState.value.channels[0].baseUrl)
+    }
+
+    @Test
+    fun `updateChannel updates existing channel`() {
+        val channel = ChannelConfig(
+            id = "channel-1",
+            name = "Original Name",
+            type = ChannelType.OPENAI,
+            baseUrl = "https://api.openai.com/v1",
+            apiKey = "sk-old-key",
+            fetchedModels = emptyList(),
+            fetchedAt = null
         )
-    }
+        every { secureStorage.loadChannels() } returns listOf(channel)
+        viewModel.loadChannels()
 
-    @Test
-    fun `saveSettings saves OpenAI settings`() {
-        viewModel.updateOpenAiApiKey("openai-key")
-        viewModel.updateOpenAiModel(ModelRegistry.GPT_4O)
-        
-        viewModel.saveSettings()
-        
-        verify { secureStorage.saveApiKey("openai", "openai-key") }
-        verify { secureStorage.saveApiKey("openai_model", "gpt-4o") }
-    }
+        viewModel.startEditChannel("channel-1")
+        viewModel.updateFormName("Updated Name")
+        viewModel.updateFormApiKey("sk-new-key")
+        viewModel.updateChannel("channel-1")
 
-    @Test
-    fun `saveSettings clears empty OpenAI key`() {
-        viewModel.updateOpenAiApiKey("")
-        
-        viewModel.saveSettings()
-        
-        verify { secureStorage.clearApiKey("openai") }
-    }
-
-    @Test
-    fun `saveSettings saves Anthropic settings`() {
-        viewModel.updateAnthropicApiKey("anthropic-key")
-        viewModel.updateAnthropicModel(ModelRegistry.CLAUDE_SONNET)
-        
-        viewModel.saveSettings()
-        
-        verify { secureStorage.saveApiKey("anthropic", "anthropic-key") }
-        verify { secureStorage.saveApiKey("anthropic_model", "claude-3-5-sonnet-20241022") }
-    }
-
-    @Test
-    fun `saveSettings clears empty Anthropic key`() {
-        viewModel.updateAnthropicApiKey("")
-        
-        viewModel.saveSettings()
-        
-        verify { secureStorage.clearApiKey("anthropic") }
-    }
-
-    @Test
-    fun `available models are filtered by provider`() {
         val state = viewModel.uiState.value
-        
-        val openAiModels = state.openAiSettings.availableModels
-        val anthropicModels = state.anthropicSettings.availableModels
-        
-        assertTrue(openAiModels.all { it.modelId.startsWith("gpt-") || it.modelId.startsWith("deepseek-") })
-        assertTrue(anthropicModels.all { it.modelId.startsWith("claude-") })
+        assertEquals(1, state.channels.size)
+        assertEquals("Updated Name", state.channels[0].name)
+        assertEquals("sk-new-key", state.channels[0].apiKey)
+        assertNull(state.editingChannelId)
     }
 
     @Test
-    fun `default models are set correctly`() {
+    fun `deleteChannel removes channel from list`() {
+        val channel = ChannelConfig(
+            id = "channel-1",
+            name = "To Delete",
+            type = ChannelType.OPENAI,
+            baseUrl = "https://api.openai.com/v1",
+            apiKey = "sk-key",
+            fetchedModels = emptyList(),
+            fetchedAt = null
+        )
+        every { secureStorage.loadChannels() } returns listOf(channel)
+        viewModel.loadChannels()
+
+        viewModel.deleteChannel("channel-1")
+
         val state = viewModel.uiState.value
-        
-        assertEquals(ModelRegistry.defaultOpenAiModel, state.openAiSettings.selectedModel)
-        assertEquals(ModelRegistry.defaultAnthropicModel, state.anthropicSettings.selectedModel)
+        assertTrue(state.channels.isEmpty())
+    }
+
+    @Test
+    fun `deleteChannel clears active channel if it was the deleted one`() {
+        val channel = ChannelConfig(
+            id = "channel-1",
+            name = "Active Channel",
+            type = ChannelType.OPENAI,
+            baseUrl = "https://api.openai.com/v1",
+            apiKey = "sk-key",
+            fetchedModels = emptyList(),
+            fetchedAt = null
+        )
+        every { secureStorage.loadChannels() } returns listOf(channel)
+        every { secureStorage.loadActiveChannelId() } returns "channel-1"
+        viewModel.loadChannels()
+
+        viewModel.deleteChannel("channel-1")
+
+        val state = viewModel.uiState.value
+        assertNull(state.activeChannelId)
+    }
+
+    @Test
+    fun `deleteChannel preserves active channel if different from deleted`() {
+        val channel1 = ChannelConfig(
+            id = "channel-1",
+            name = "Channel 1",
+            type = ChannelType.OPENAI,
+            baseUrl = "https://api.openai.com/v1",
+            apiKey = "sk-key1",
+            fetchedModels = emptyList(),
+            fetchedAt = null
+        )
+        val channel2 = ChannelConfig(
+            id = "channel-2",
+            name = "Channel 2",
+            type = ChannelType.ANTHROPIC,
+            baseUrl = "https://api.anthropic.com",
+            apiKey = "sk-key2",
+            fetchedModels = emptyList(),
+            fetchedAt = null
+        )
+        every { secureStorage.loadChannels() } returns listOf(channel1, channel2)
+        every { secureStorage.loadActiveChannelId() } returns "channel-2"
+        viewModel.loadChannels()
+
+        viewModel.deleteChannel("channel-1")
+
+        val state = viewModel.uiState.value
+        assertEquals("channel-2", state.activeChannelId)
+        assertEquals(1, state.channels.size)
+    }
+
+    @Test
+    fun `setActiveChannel updates and persists active channel ID`() {
+        viewModel.setActiveChannel("new-active-id")
+
+        io.mockk.verify { secureStorage.saveActiveChannelId("new-active-id") }
+        assertEquals("new-active-id", viewModel.uiState.value.activeChannelId)
+    }
+
+    @Test
+    fun `setActiveModel updates and persists active model ID`() {
+        viewModel.setActiveModel("gpt-4o")
+
+        io.mockk.verify { secureStorage.saveActiveModelId("gpt-4o") }
+        assertEquals("gpt-4o", viewModel.uiState.value.activeModelId)
+    }
+
+    @Test
+    fun `onBatchSizeChange updates batch size within valid range`() {
+        viewModel.onBatchSizeChange(75)
+        assertEquals(75, viewModel.uiState.value.batchSize)
+
+        viewModel.onBatchSizeChange(0)
+        assertEquals(1, viewModel.uiState.value.batchSize) // clamped to min
+
+        viewModel.onBatchSizeChange(500)
+        assertEquals(200, viewModel.uiState.value.batchSize) // clamped to max
+    }
+
+    @Test
+    fun `onConcurrencyChange updates concurrency within valid range`() {
+        viewModel.onConcurrencyChange(8)
+        assertEquals(8, viewModel.uiState.value.concurrency)
+
+        viewModel.onConcurrencyChange(0)
+        assertEquals(1, viewModel.uiState.value.concurrency) // clamped to min
+
+        viewModel.onConcurrencyChange(20)
+        assertEquals(10, viewModel.uiState.value.concurrency) // clamped to max
+    }
+
+    @Test
+    fun `clearMessage clears global message`() {
+        // First set a message by triggering an error condition
+        viewModel.toggleAddChannel()
+        viewModel.addChannel() // This sets global message for incomplete form
+
+        viewModel.clearMessage()
+        assertNull(viewModel.uiState.value.globalMessage)
     }
 }

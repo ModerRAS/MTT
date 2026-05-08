@@ -4,23 +4,29 @@ package com.mtt.app.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,16 +34,23 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,22 +60,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.mtt.app.data.model.LlmProvider
-import com.mtt.app.data.model.ModelInfo
-import com.mtt.app.data.remote.llm.ModelRegistry
-import com.mtt.app.ui.theme.MttTheme
+import com.mtt.app.data.model.ChannelConfig
+import com.mtt.app.data.model.ChannelType
+import com.mtt.app.data.model.FetchedModel
 
 /**
- * Settings screen for API key, model, and proxy configuration.
+ * Settings screen for managing LLM provider channels, active model selection,
+ * and translation pipeline configuration.
  */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show snackbar when globalMessage changes
+    LaunchedEffect(uiState.globalMessage) {
+        uiState.globalMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearMessage()
+        }
+    }
 
     // Auto-save on exit
     DisposableEffect(Unit) {
@@ -71,125 +92,120 @@ fun SettingsScreen(
         }
     }
 
-    SettingsScreenContent(
-        uiState = uiState,
-        onOpenAiApiKeyChange = viewModel::updateOpenAiApiKey,
-        onOpenAiBaseUrlChange = viewModel::updateOpenAiBaseUrl,
-        onOpenAiModelChange = viewModel::updateOpenAiModel,
-        onOpenAiModelTextChanged = viewModel::updateOpenAiModelById,
-        onOpenAiKeyVisibilityToggle = viewModel::toggleOpenAiKeyVisibility,
-        onOpenAiTestConnection = viewModel::testOpenAiConnection,
-        onAnthropicApiKeyChange = viewModel::updateAnthropicApiKey,
-        onAnthropicBaseUrlChange = viewModel::updateAnthropicBaseUrl,
-        onAnthropicModelChange = viewModel::updateAnthropicModel,
-        onAnthropicModelTextChanged = viewModel::updateAnthropicModelById,
-        onAnthropicKeyVisibilityToggle = viewModel::toggleAnthropicKeyVisibility,
-        onAnthropicTestConnection = viewModel::testAnthropicConnection,
-        onAddCustomModel = viewModel::addCustomModel,
-        onRemoveCustomModel = viewModel::removeCustomModel,
-        onBatchSizeChange = viewModel::updateBatchSize,
-        onConcurrencyChange = viewModel::updateConcurrency
-    )
-}
-
-@Composable
-private fun SettingsScreenContent(
-    uiState: SettingsUiState,
-    onOpenAiApiKeyChange: (String) -> Unit,
-    onOpenAiBaseUrlChange: (String) -> Unit,
-    onOpenAiModelChange: (ModelInfo) -> Unit,
-    onOpenAiModelTextChanged: (String) -> Unit,
-    onOpenAiKeyVisibilityToggle: () -> Unit,
-    onOpenAiTestConnection: () -> Unit,
-    onAnthropicApiKeyChange: (String) -> Unit,
-    onAnthropicBaseUrlChange: (String) -> Unit,
-    onAnthropicModelChange: (ModelInfo) -> Unit,
-    onAnthropicModelTextChanged: (String) -> Unit,
-    onAnthropicKeyVisibilityToggle: () -> Unit,
-    onAnthropicTestConnection: () -> Unit,
-    onAddCustomModel: (modelId: String, displayName: String, contextWindow: Int, isAnthropic: Boolean) -> Unit,
-    onRemoveCustomModel: (modelId: String) -> Unit,
-    onBatchSizeChange: (Int) -> Unit = {},
-    onConcurrencyChange: (Int) -> Unit = {}
-) {
     val scrollState = rememberScrollState()
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("设置") })
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(padding)
                 .verticalScroll(scrollState)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header
+            // ── Active Config Card ────────────────────
+            ActiveConfigCard(
+                channels = uiState.channels,
+                activeChannelId = uiState.activeChannelId,
+                activeModelId = uiState.activeModelId,
+                onChannelSelected = viewModel::setActiveChannel,
+                onModelSelected = viewModel::setActiveModel
+            )
+
+            HorizontalDivider()
+
+            // ── Channel List ──────────────────────────
             Text(
-                text = "设置",
-                style = MaterialTheme.typography.headlineMedium,
+                text = "所有渠道",
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground
             )
 
-            // OpenAI Settings Section
-            ProviderSettingsSection(
-                title = "OpenAI",
-                settings = uiState.openAiSettings,
-                isAnthropic = false,
-                onApiKeyChange = onOpenAiApiKeyChange,
-                onBaseUrlChange = onOpenAiBaseUrlChange,
-                onModelChange = onOpenAiModelChange,
-                onModelTextChanged = onOpenAiModelTextChanged,
-                onKeyVisibilityToggle = onOpenAiKeyVisibilityToggle,
-                onTestConnection = onOpenAiTestConnection,
-                onAddCustomModel = onAddCustomModel,
-                onRemoveCustomModel = onRemoveCustomModel
-            )
+            uiState.channels.forEach { channel ->
+                ChannelCard(
+                    channel = channel,
+                    fetchState = uiState.modelFetchStates[channel.id] ?: FetchState.Idle,
+                    onEdit = { viewModel.startEditChannel(channel.id) },
+                    onDelete = { viewModel.deleteChannel(channel.id) },
+                    onFetchModels = { viewModel.fetchModelsForChannel(channel.id) }
+                )
+            }
 
-            // Anthropic Settings Section
-            ProviderSettingsSection(
-                title = "Anthropic",
-                settings = uiState.anthropicSettings,
-                isAnthropic = true,
-                onApiKeyChange = onAnthropicApiKeyChange,
-                onBaseUrlChange = onAnthropicBaseUrlChange,
-                onModelChange = onAnthropicModelChange,
-                onModelTextChanged = onAnthropicModelTextChanged,
-                onKeyVisibilityToggle = onAnthropicKeyVisibilityToggle,
-                onTestConnection = onAnthropicTestConnection,
-                onAddCustomModel = onAddCustomModel,
-                onRemoveCustomModel = onRemoveCustomModel
-            )
+            // ── Add Channel Button ────────────────────
+            OutlinedButton(
+                onClick = viewModel::toggleAddChannel,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "添加渠道")
+                Spacer(Modifier.width(8.dp))
+                Text("添加渠道")
+            }
 
-            // Pipeline Config Section
-            PipelineConfigSection(
+            HorizontalDivider()
+
+            // ── Advanced Settings ─────────────────────
+            PipelineConfigCard(
                 batchSize = uiState.batchSize,
                 concurrency = uiState.concurrency,
-                onBatchSizeChange = onBatchSizeChange,
-                onConcurrencyChange = onConcurrencyChange
+                onBatchSizeChange = viewModel::onBatchSizeChange,
+                onConcurrencyChange = viewModel::onConcurrencyChange
+            )
+        }
+
+        // ── Add Channel Dialog ────────────────────
+        if (uiState.isAddingChannel) {
+            ChannelFormDialog(
+                title = "添加渠道",
+                form = uiState.newChannelForm,
+                onNameChange = viewModel::updateFormName,
+                onTypeChange = viewModel::updateFormType,
+                onBaseUrlChange = viewModel::updateFormBaseUrl,
+                onApiKeyChange = viewModel::updateFormApiKey,
+                onToggleKeyVisibility = viewModel::toggleFormApiKeyVisibility,
+                onDismiss = viewModel::toggleAddChannel,
+                onConfirm = viewModel::addChannel
+            )
+        }
+
+        // ── Edit Channel Dialog ───────────────────
+        val editingId = uiState.editingChannelId
+        if (editingId != null) {
+            ChannelFormDialog(
+                title = "编辑渠道",
+                form = uiState.newChannelForm,
+                onNameChange = viewModel::updateFormName,
+                onTypeChange = viewModel::updateFormType,
+                onBaseUrlChange = viewModel::updateFormBaseUrl,
+                onApiKeyChange = viewModel::updateFormApiKey,
+                onToggleKeyVisibility = viewModel::toggleFormApiKeyVisibility,
+                onDismiss = {
+                    viewModel.cancelEditChannel()
+                },
+                onConfirm = {
+                    viewModel.updateChannel(editingId)
+                },
+                confirmLabel = "更新"
             )
         }
     }
 }
 
+// ── Active Config Card ────────────────────────────
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProviderSettingsSection(
-    title: String,
-    settings: ProviderSettings,
-    isAnthropic: Boolean,
-    onApiKeyChange: (String) -> Unit,
-    onBaseUrlChange: (String) -> Unit,
-    onModelChange: (ModelInfo) -> Unit,
-    onModelTextChanged: (String) -> Unit,
-    onKeyVisibilityToggle: () -> Unit,
-    onTestConnection: () -> Unit,
-    onAddCustomModel: (modelId: String, displayName: String, contextWindow: Int, isAnthropic: Boolean) -> Unit,
-    onRemoveCustomModel: (modelId: String) -> Unit
+private fun ActiveConfigCard(
+    channels: List<ChannelConfig>,
+    activeChannelId: String?,
+    activeModelId: String,
+    onChannelSelected: (String) -> Unit,
+    onModelSelected: (String) -> Unit
 ) {
-    var showCustomModelDialog by remember { mutableStateOf(false) }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -200,178 +216,530 @@ private fun ProviderSettingsSection(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Section title
             Text(
-                text = title,
+                text = "活跃配置",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // API Key input with visibility toggle
-            OutlinedTextField(
-                value = settings.apiKey,
-                onValueChange = onApiKeyChange,
-                label = { Text("API Key") },
-                placeholder = { Text("Enter your API key") },
-                isError = settings.apiKeyError != null,
-                supportingText = settings.apiKeyError?.let { { Text(it) } },
-                visualTransformation = if (settings.isKeyVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                trailingIcon = {
-                    IconButton(onClick = onKeyVisibilityToggle) {
-                        Icon(
-                            imageVector = if (settings.isKeyVisible) {
-                                Icons.Default.Visibility
-                            } else {
-                                Icons.Default.VisibilityOff
-                            },
-                            contentDescription = if (settings.isKeyVisible) {
-                                "Hide API key"
-                            } else {
-                                "Show API key"
+            // Channel selector
+            ChannelDropdown(
+                channels = channels,
+                activeChannelId = activeChannelId,
+                onChannelSelected = onChannelSelected
+            )
+
+            // Model selector — show models from active channel
+            val activeChannel = channels.find { it.id == activeChannelId }
+            EditableModelDropdown(
+                selectedModelId = activeModelId,
+                fetchedModels = activeChannel?.fetchedModels ?: emptyList(),
+                onModelSelected = onModelSelected,
+                enabled = activeChannel != null
+            )
+
+            Text(
+                text = "提示: 可在下方添加和管理渠道",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// ── Channel Dropdown ──────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChannelDropdown(
+    channels: List<ChannelConfig>,
+    activeChannelId: String?,
+    onChannelSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val activeChannel = channels.find { it.id == activeChannelId }
+    val displayText = activeChannel?.name ?: "无"
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (channels.isNotEmpty()) expanded = it }
+    ) {
+        OutlinedTextField(
+            value = displayText,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("渠道") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth(),
+            singleLine = true,
+            enabled = channels.isNotEmpty()
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            channels.forEach { channel ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = channel.name,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    onClick = {
+                        onChannelSelected(channel.id)
+                        expanded = false
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                )
+            }
+        }
+    }
+}
+
+// ── Editable Model Dropdown ───────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditableModelDropdown(
+    selectedModelId: String,
+    fetchedModels: List<FetchedModel>,
+    onModelSelected: (String) -> Unit,
+    label: String = "模型",
+    enabled: Boolean = true
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var text by remember(selectedModelId) { mutableStateOf(selectedModelId) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = it }
+    ) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = {
+                text = it
+                onModelSelected(it)
+                expanded = true
+            },
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth(),
+            enabled = enabled,
+            singleLine = true,
+            placeholder = { Text("输入或选择模型名") }
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            fetchedModels.forEach { model ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = model.displayName,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "${model.modelId} · ${model.contextWindow / 1000}K",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    onClick = {
+                        text = model.modelId
+                        onModelSelected(model.modelId)
+                        expanded = false
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                )
+            }
+        }
+    }
+}
+
+// ── Channel Card ──────────────────────────────────
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChannelCard(
+    channel: ChannelConfig,
+    fetchState: FetchState,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onFetchModels: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Header row: name + type chip + actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+
+                AssistChip(
+                    onClick = {},
+                    label = {
+                        Text(
+                            text = when (channel.type) {
+                                ChannelType.OPENAI -> "OpenAI"
+                                ChannelType.ANTHROPIC -> "Anthropic"
                             }
                         )
                     }
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+                )
 
-            // Base URL input
-            OutlinedTextField(
-                value = settings.baseUrl,
-                onValueChange = onBaseUrlChange,
-                label = { Text("Base URL") },
-                placeholder = { Text("https://api.openai.com/v1") },
-                isError = settings.baseUrlError != null,
-                supportingText = settings.baseUrlError?.let { { Text(it) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Editable model input with dropdown suggestions
-            EditableModelDropdown(
-                label = "模型",
-                selectedModel = settings.selectedModel,
-                models = settings.availableModels,
-                onModelSelected = onModelChange,
-                onModelTextChanged = onModelTextChanged,
-                onAddCustomModel = { onAddCustomModel(it, it, 128000, isAnthropic) },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Custom model management row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = { showCustomModelDialog = true },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "添加自定义模型")
-                    Spacer(Modifier.width(4.dp))
-                    Text("自定义模型")
+                IconButton(onClick = onEdit) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "编辑渠道",
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
 
-                // Show delete button if custom model is selected
-                if (settings.selectedModel.isCustom) {
-                    OutlinedButton(
-                        onClick = { onRemoveCustomModel(settings.selectedModel.modelId) },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除模型")
-                        Spacer(Modifier.width(4.dp))
-                        Text("删除")
-                    }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除渠道",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
                 }
             }
 
-            // Test Connection button
+            // URL
+            Text(
+                text = "URL: ${channel.baseUrl}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // API Key (masked)
+            val keyDisplay = if (channel.apiKey.isBlank()) {
+                "Key: 未设置"
+            } else if (channel.apiKey.length <= 4) {
+                "Key: ····"
+            } else {
+                "Key: ····${channel.apiKey.takeLast(4)}"
+            }
+            Text(
+                text = keyDisplay,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Model count
+            val modelCount = channel.fetchedModels.size
+            Text(
+                text = if (modelCount > 0) "模型: $modelCount 个已获取" else "模型: 尚未获取",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Fetch models button with state
+            FetchModelsRow(
+                fetchState = fetchState,
+                onFetch = onFetchModels
+            )
+
+            // Show first few model names on success
+            if (fetchState is FetchState.Success && fetchState.models.isNotEmpty()) {
+                ModelChips(models = fetchState.models)
+            }
+        }
+    }
+}
+
+// ── Fetch Models Row ──────────────────────────────
+
+@Composable
+private fun FetchModelsRow(
+    fetchState: FetchState,
+    onFetch: () -> Unit
+) {
+    when (fetchState) {
+        is FetchState.Idle -> {
+            OutlinedButton(
+                onClick = onFetch,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("获取模型列表")
+            }
+        }
+        is FetchState.Fetching -> {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                when (val testState = settings.testConnectionState) {
-                    is TestConnectionState.Testing -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .width(24.dp)
-                                .height(24.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "测试中...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    is TestConnectionState.Success -> {
-                        Text(
-                            text = testState.message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        TestConnectionButton(
-                            onClick = onTestConnection,
-                            enabled = settings.apiKey.isNotBlank() && settings.baseUrlError == null
-                        )
-                    }
-                    is TestConnectionState.Error -> {
-                        Text(
-                            text = testState.message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        TestConnectionButton(
-                            onClick = onTestConnection,
-                            enabled = settings.apiKey.isNotBlank() && settings.baseUrlError == null
-                        )
-                    }
-                    is TestConnectionState.Idle -> {
-                        TestConnectionButton(
-                            onClick = onTestConnection,
-                            enabled = settings.apiKey.isNotBlank() && settings.baseUrlError == null
-                        )
-                    }
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    text = "正在获取模型列表...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        is FetchState.Success -> {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "已获取 ${fetchState.models.size} 个模型",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onFetch) {
+                    Text("重新获取")
+                }
+            }
+        }
+        is FetchState.Error -> {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = fetchState.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2
+                    )
+                }
+                TextButton(onClick = onFetch) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("重试")
                 }
             }
         }
     }
+}
 
-    // Custom model configuration dialog
-    if (showCustomModelDialog) {
-        CustomModelDialog(
-            isAnthropic = isAnthropic,
-            onDismiss = { showCustomModelDialog = false },
-            onConfirm = { modelId, displayName, contextWindow ->
-                onAddCustomModel(modelId, displayName, contextWindow, isAnthropic)
-                // Find and select the newly added model
-                val newModel = ModelRegistry.getById(modelId)
-                if (newModel != null) {
-                    onModelChange(newModel)
+// ── Model Chips ───────────────────────────────────
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModelChips(models: List<FetchedModel>) {
+    val displayModels = models.take(3)
+    val remaining = models.size - 3
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        displayModels.forEach { model ->
+            FilterChip(
+                selected = false,
+                onClick = {},
+                label = {
+                    Text(
+                        text = model.displayName,
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 }
-                showCustomModelDialog = false
-            }
-        )
+            )
+        }
+        if (remaining > 0) {
+            FilterChip(
+                selected = false,
+                onClick = {},
+                label = {
+                    Text(
+                        text = "+$remaining",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+        }
     }
 }
 
-/**
- * Pipeline configuration section — batch size and concurrency controls.
- */
+// ── Channel Form Dialog ───────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PipelineConfigSection(
+private fun ChannelFormDialog(
+    title: String,
+    form: ChannelFormState,
+    onNameChange: (String) -> Unit,
+    onTypeChange: (ChannelType) -> Unit,
+    onBaseUrlChange: (String) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onToggleKeyVisibility: () -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    confirmLabel: String = "保存"
+) {
+    var typeExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Channel name
+                OutlinedTextField(
+                    value = form.name,
+                    onValueChange = onNameChange,
+                    label = { Text("名称 *") },
+                    placeholder = { Text("例如: 生产环境 OpenAI") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Channel type selector
+                ExposedDropdownMenuBox(
+                    expanded = typeExpanded,
+                    onExpandedChange = { typeExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = when (form.type) {
+                            ChannelType.OPENAI -> "OpenAI"
+                            ChannelType.ANTHROPIC -> "Anthropic"
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("类型") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                        modifier = Modifier.menuAnchor(),
+                        singleLine = true
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = typeExpanded,
+                        onDismissRequest = { typeExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("OpenAI") },
+                            onClick = {
+                                onTypeChange(ChannelType.OPENAI)
+                                typeExpanded = false
+                            },
+                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Anthropic") },
+                            onClick = {
+                                onTypeChange(ChannelType.ANTHROPIC)
+                                typeExpanded = false
+                            },
+                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                        )
+                    }
+                }
+
+                // Base URL
+                OutlinedTextField(
+                    value = form.baseUrl,
+                    onValueChange = onBaseUrlChange,
+                    label = { Text("Base URL *") },
+                    placeholder = {
+                        Text(
+                            when (form.type) {
+                                ChannelType.OPENAI -> "https://api.openai.com/v1"
+                                ChannelType.ANTHROPIC -> "https://api.anthropic.com"
+                            }
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // API Key with visibility toggle
+                OutlinedTextField(
+                    value = form.apiKey,
+                    onValueChange = onApiKeyChange,
+                    label = { Text("API Key *") },
+                    placeholder = { Text("输入 API Key") },
+                    visualTransformation = if (form.apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = onToggleKeyVisibility) {
+                            Icon(
+                                imageVector = if (form.apiKeyVisible) {
+                                    Icons.Default.Visibility
+                                } else {
+                                    Icons.Default.VisibilityOff
+                                },
+                                contentDescription = if (form.apiKeyVisible) {
+                                    "隐藏 API Key"
+                                } else {
+                                    "显示 API Key"
+                                }
+                            )
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+// ── Pipeline Config Card ──────────────────────────
+
+@Composable
+private fun PipelineConfigCard(
     batchSize: Int,
     concurrency: Int,
     onBatchSizeChange: (Int) -> Unit,
@@ -388,7 +756,7 @@ private fun PipelineConfigSection(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "流水线配置",
+                text = "高级设置",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -398,7 +766,7 @@ private fun PipelineConfigSection(
                 text = "每批文本数: $batchSize",
                 style = MaterialTheme.typography.bodyMedium
             )
-            androidx.compose.material3.Slider(
+            Slider(
                 value = batchSize.toFloat(),
                 onValueChange = { onBatchSizeChange(it.toInt()) },
                 valueRange = 1f..200f,
@@ -413,14 +781,14 @@ private fun PipelineConfigSection(
                 Text("200", style = MaterialTheme.typography.bodySmall)
             }
 
-            androidx.compose.material3.HorizontalDivider()
+            HorizontalDivider()
 
             // Concurrency slider
             Text(
                 text = "并行批次数: $concurrency",
                 style = MaterialTheme.typography.bodyMedium
             )
-            androidx.compose.material3.Slider(
+            Slider(
                 value = concurrency.toFloat(),
                 onValueChange = { onConcurrencyChange(it.toInt()) },
                 valueRange = 1f..10f,
@@ -441,312 +809,5 @@ private fun PipelineConfigSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-}
-
-@Composable
-private fun TestConnectionButton(
-    onClick: () -> Unit,
-    enabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier
-    ) {
-        Text("测试连接")
-    }
-}
-
-/**
- * Editable model dropdown - user can type any model name or select from suggestions.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EditableModelDropdown(
-    label: String,
-    selectedModel: ModelInfo,
-    models: List<ModelInfo>,
-    onModelSelected: (ModelInfo) -> Unit,
-    onModelTextChanged: (String) -> Unit,
-    onAddCustomModel: (modelId: String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var expanded by remember { mutableStateOf(false) }
-    var text by remember(selectedModel) { mutableStateOf(selectedModel.displayName) }
-    val filteredModels = remember(text, models) {
-        models.filter {
-            it.displayName.contains(text, ignoreCase = true) ||
-            it.modelId.contains(text, ignoreCase = true)
-        }
-    }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-        modifier = modifier
-    ) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = { newValue ->
-                text = newValue
-                expanded = true
-                onModelTextChanged(newValue)
-                // Try to find exact match
-                val match = models.firstOrNull {
-                    it.displayName == newValue || it.modelId == newValue
-                }
-                if (match != null) {
-                    onModelSelected(match)
-                }
-            },
-            label = { Text(label) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(),
-            singleLine = true,
-            placeholder = { Text("输入或选择模型名") }
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            // Show matching preset + custom models
-            filteredModels.forEach { model ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(
-                                text = model.displayName,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Row {
-                                Text(
-                                    text = "Context: ${model.contextWindow / 1000}K tokens",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (model.isCustom) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "自定义",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.tertiary
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    onClick = {
-                        text = model.displayName
-                        onModelSelected(model)
-                        expanded = false
-                    },
-                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                )
-            }
-
-            // If no exact match, show "Add custom model" option
-            if (text.isNotBlank() && models.none { it.modelId == text || it.displayName == text }) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = "添加自定义模型 \"$text\"",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    onClick = {
-                        onAddCustomModel(text)
-                        expanded = false
-                    },
-                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                )
-            }
-        }
-    }
-}
-
-/**
- * Dialog for adding a custom model with full configuration.
- */
-@Composable
-private fun CustomModelDialog(
-    isAnthropic: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: (modelId: String, displayName: String, contextWindow: Int) -> Unit
-) {
-    var modelId by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf("") }
-    var contextWindowText by remember { mutableStateOf("128000") }
-    var modelIdError by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("配置自定义模型") },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "供应商: ${if (isAnthropic) "Anthropic" else "OpenAI"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                OutlinedTextField(
-                    value = modelId,
-                    onValueChange = {
-                        modelId = it
-                        modelIdError = if (it.isBlank()) "Model ID 不能为空" else null
-                    },
-                    label = { Text("Model ID") },
-                    placeholder = { Text(if (isAnthropic) "claude-3-opus-20240229" else "gpt-4-turbo") },
-                    isError = modelIdError != null,
-                    supportingText = modelIdError?.let { { Text(it) } },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text("显示名称 (可选)") },
-                    placeholder = { Text("Claude 3 Opus") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = contextWindowText,
-                    onValueChange = { contextWindowText = it },
-                    label = { Text("Context Window (tokens)") },
-                    placeholder = { Text("128000") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Text(
-                    text = "Context window 影响 token 估算和批处理大小。不同模型的 context window 不同，建议查阅模型官方文档。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (modelId.isBlank()) {
-                        modelIdError = "Model ID 不能为空"
-                        return@Button
-                    }
-                    val contextWindow = contextWindowText.toIntOrNull() ?: 128000
-                    val name = displayName.ifBlank { modelId }
-                    onConfirm(modelId, name, contextWindow)
-                },
-                enabled = modelId.isNotBlank()
-            ) {
-                Text("添加")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun SettingsScreenPreview() {
-    MttTheme(dynamicColor = false) {
-        SettingsScreenContent(
-            uiState = SettingsUiState(),
-            onOpenAiApiKeyChange = {},
-            onOpenAiBaseUrlChange = {},
-            onOpenAiModelChange = {},
-            onOpenAiModelTextChanged = {},
-            onOpenAiKeyVisibilityToggle = {},
-            onOpenAiTestConnection = {},
-            onAnthropicApiKeyChange = {},
-            onAnthropicBaseUrlChange = {},
-            onAnthropicModelChange = {},
-            onAnthropicModelTextChanged = {},
-            onAnthropicKeyVisibilityToggle = {},
-            onAnthropicTestConnection = {},
-            onAddCustomModel = { _, _, _, _ -> },
-            onRemoveCustomModel = {}
-        )
-    }
-}
-
-@Preview(showBackground = true, showSystemUi = true, uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES)
-@Composable
-private fun SettingsScreenDarkPreview() {
-    MttTheme(darkTheme = true, dynamicColor = false) {
-        SettingsScreenContent(
-            uiState = SettingsUiState(),
-            onOpenAiApiKeyChange = {},
-            onOpenAiBaseUrlChange = {},
-            onOpenAiModelChange = {},
-            onOpenAiModelTextChanged = {},
-            onOpenAiKeyVisibilityToggle = {},
-            onOpenAiTestConnection = {},
-            onAnthropicApiKeyChange = {},
-            onAnthropicBaseUrlChange = {},
-            onAnthropicModelChange = {},
-            onAnthropicModelTextChanged = {},
-            onAnthropicKeyVisibilityToggle = {},
-            onAnthropicTestConnection = {},
-            onAddCustomModel = { _, _, _, _ -> },
-            onRemoveCustomModel = {}
-        )
-    }
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun SettingsScreenWithTestDataPreview() {
-    MttTheme(dynamicColor = false) {
-        SettingsScreenContent(
-            uiState = SettingsUiState(
-                openAiSettings = ProviderSettings(
-                    apiKey = "sk-test-key-1234567890",
-                    apiKeyError = null,
-                    baseUrl = "https://api.openai.com/v1",
-                    baseUrlError = null,
-                    testConnectionState = TestConnectionState.Success("Connection successful"),
-                    selectedModel = ModelRegistry.defaultOpenAiModel,
-                    defaultModel = ModelRegistry.defaultOpenAiModel,
-                    defaultBaseUrl = "https://api.openai.com/v1"
-                ),
-                anthropicSettings = ProviderSettings(
-                    apiKey = "sk-ant-test-key-1234567890",
-                    apiKeyError = "API key cannot be empty",
-                    baseUrl = "https://api.anthropic.com",
-                    baseUrlError = null,
-                    testConnectionState = TestConnectionState.Error("Invalid API key"),
-                    selectedModel = ModelRegistry.defaultAnthropicModel,
-                    defaultModel = ModelRegistry.defaultAnthropicModel,
-                    defaultBaseUrl = "https://api.anthropic.com"
-                )
-            ),
-            onOpenAiApiKeyChange = {},
-            onOpenAiBaseUrlChange = {},
-            onOpenAiModelChange = {},
-            onOpenAiModelTextChanged = {},
-            onOpenAiKeyVisibilityToggle = {},
-            onOpenAiTestConnection = {},
-            onAnthropicApiKeyChange = {},
-            onAnthropicBaseUrlChange = {},
-            onAnthropicModelChange = {},
-            onAnthropicModelTextChanged = {},
-            onAnthropicKeyVisibilityToggle = {},
-            onAnthropicTestConnection = {},
-            onAddCustomModel = { _, _, _, _ -> },
-            onRemoveCustomModel = {}
-        )
     }
 }

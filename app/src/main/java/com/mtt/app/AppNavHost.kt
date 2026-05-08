@@ -3,7 +3,7 @@ package com.mtt.app
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -23,10 +23,10 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.mtt.app.ui.glossary.GlossaryScreen
+import com.mtt.app.ui.data.DataScreen
+import com.mtt.app.ui.home.HomeScreen
 import com.mtt.app.ui.result.ResultScreen
 import com.mtt.app.ui.settings.SettingsScreen
-import com.mtt.app.ui.translation.TranslationScreen
 
 /**
  * Top-level navigation destinations.
@@ -40,8 +40,8 @@ private data class BottomNavDestination(
 )
 
 private val bottomNavDestinations = listOf(
-    BottomNavDestination("translation", "翻译", Icons.AutoMirrored.Filled.Send),
-    BottomNavDestination("glossary", "术语表", Icons.AutoMirrored.Filled.List),
+    BottomNavDestination("home", "主页", Icons.Default.Home),
+    BottomNavDestination("data", "数据", Icons.AutoMirrored.Filled.List),
     BottomNavDestination("settings", "设置", Icons.Default.Settings)
 )
 
@@ -95,8 +95,8 @@ fun AppNavHost(
             startDestination = startDestination,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable("translation") {
-                TranslationScreen(
+            composable("home") {
+                HomeScreen(
                     onNavigateToSettings = {
                         navController.navigate("settings") {
                             popUpTo(navController.graph.findStartDestination().id) {
@@ -105,11 +105,16 @@ fun AppNavHost(
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    onNavigateToResult = {
+                        navController.navigate("result") {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
-            composable("glossary") {
-                GlossaryScreen()
+            composable("data") {
+                DataScreen()
             }
             composable("settings") {
                 SettingsScreen()

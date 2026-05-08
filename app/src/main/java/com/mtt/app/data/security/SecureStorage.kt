@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.mtt.app.data.model.ChannelConfig
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 /**
  * Secure storage for API keys using EncryptedSharedPreferences.
  *
@@ -114,6 +117,59 @@ class SecureStorage(
             .apply()
     }
 
+    /**
+     * Save all channels as JSON array to encrypted storage.
+     */
+    fun saveChannels(channels: List<ChannelConfig>) {
+        val json = Json { ignoreUnknownKeys = true }
+        val jsonString = json.encodeToString(channels)
+        encryptedPrefs.edit()
+            .putString(KEY_CHANNELS, jsonString)
+            .apply()
+    }
+
+    /**
+     * Load all channels from encrypted storage.
+     * Returns empty list if no channels saved.
+     */
+    fun loadChannels(): List<ChannelConfig> {
+        val jsonString = encryptedPrefs.getString(KEY_CHANNELS, null) ?: return emptyList()
+        val json = Json { ignoreUnknownKeys = true }
+        return try {
+            json.decodeFromString<List<ChannelConfig>>(jsonString)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Save the currently active channel ID.
+     */
+    fun saveActiveChannelId(id: String) {
+        saveValue(KEY_ACTIVE_CHANNEL_ID, id)
+    }
+
+    /**
+     * Load the currently active channel ID.
+     */
+    fun loadActiveChannelId(): String? {
+        return getValue(KEY_ACTIVE_CHANNEL_ID)
+    }
+
+    /**
+     * Save the currently active model ID.
+     */
+    fun saveActiveModelId(id: String) {
+        saveValue(KEY_ACTIVE_MODEL_ID, id)
+    }
+
+    /**
+     * Load the currently active model ID.
+     */
+    fun loadActiveModelId(): String? {
+        return getValue(KEY_ACTIVE_MODEL_ID)
+    }
+
     private fun getKeyForProvider(provider: String): String {
         return when (provider) {
             PROVIDER_OPENAI -> KEY_OPENAI
@@ -131,6 +187,11 @@ class SecureStorage(
         private const val KEY_OPENAI = "key_openai"
         private const val KEY_ANTHROPIC = "key_anthropic"
         private const val KEY_CUSTOM_MODELS = "custom_models"
+
+        // Channel-based provider configuration keys
+        private const val KEY_CHANNELS = "channel_channels"
+        private const val KEY_ACTIVE_CHANNEL_ID = "channel_active_id"
+        private const val KEY_ACTIVE_MODEL_ID = "channel_active_model"
 
         // Model and language preference keys (used by SettingsViewModel and TranslationViewModel)
         const val KEY_OPENAI_MODEL = "openai_model"

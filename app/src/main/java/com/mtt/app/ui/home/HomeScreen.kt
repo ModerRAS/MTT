@@ -1,10 +1,11 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
-package com.mtt.app.ui.translation
+package com.mtt.app.ui.home
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,33 +18,45 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -52,63 +65,52 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.mtt.app.data.model.LlmProvider
-import com.mtt.app.data.model.ModelInfo
-import com.mtt.app.data.model.TranslationMode
-import com.mtt.app.data.model.TranslationProgress
-import com.mtt.app.data.model.TranslationUiState
-import com.mtt.app.ui.glossary.ExtractionProgress
-import com.mtt.app.ui.glossary.ExtractionProgressSection
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.collectAsState
+import com.mtt.app.data.model.ExtractedTerm
+import com.mtt.app.ui.components.ExtractionProgressSection
+import com.mtt.app.ui.components.ExtractionReviewDialog
 import com.mtt.app.ui.translation.TokenChartData
 import com.mtt.app.ui.translation.TokenDonutChart
-import com.mtt.app.ui.theme.MttTheme
 import java.text.NumberFormat
 import java.util.Locale
 
 /**
- * Main translation screen with file picker, progress, mode switching.
+ * Home screen — the main dashboard of the app.
+ *
+ * Shows model indicator, task selector (translate/polish/proofread/extract),
+ * file picker, config area, token chart, progress, and control buttons.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TranslationScreen(
-    viewModel: TranslationViewModel = hiltViewModel(),
-    onNavigateToSettings: () -> Unit = {}
+fun HomeScreen(
+    viewModel: HomeViewModel = hiltViewModel(),
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToResult: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val progress by viewModel.progress.collectAsState()
-    val currentMode by viewModel.currentMode.collectAsState()
-    val selectedFileName by viewModel.selectedFileName.collectAsState()
-    val currentModel by viewModel.currentModel.collectAsState()
-    val prohibitionCount by viewModel.prohibitionCount.collectAsState()
-    val extractedTerms by viewModel.extractedTerms.collectAsState()
-    val showExtractionReview by viewModel.showExtractionReview.collectAsState()
-    val isExtracting by viewModel.isExtracting.collectAsState()
-    val extractionProgress by viewModel.extractionProgress.collectAsState()
-    val extractionMessage by viewModel.extractionMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Show extraction result messages as snackbar
-    LaunchedEffect(extractionMessage) {
-        extractionMessage?.let { msg ->
+    LaunchedEffect(uiState.extractionMessage) {
+        uiState.extractionMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)
             viewModel.clearExtractionMessage()
         }
     }
 
-    // Reload settings when screen resumes (e.g., after returning from Settings)
+    // Reload settings when screen resumes
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -122,11 +124,11 @@ fun TranslationScreen(
         }
     }
 
-    val isTranslating = uiState is TranslationUiState.Translating
-    val isPaused = uiState is TranslationUiState.Idle && progress.completedItems > 0
-    val isCompleted = uiState is TranslationUiState.Completed
-    val isResumable = uiState is TranslationUiState.Resumable
-    val resumableJob = (uiState as? TranslationUiState.Resumable)
+    val isTranslating = uiState.screenState is ScreenState.Translating
+    val isPaused = uiState.screenState is ScreenState.Idle && uiState.progress.completedItems > 0
+    val isCompleted = uiState.screenState is ScreenState.Completed
+    val isResumable = uiState.screenState is ScreenState.Resumable
+    val resumableJob = uiState.screenState as? ScreenState.Resumable
 
     val context = LocalContext.current
 
@@ -145,47 +147,43 @@ fun TranslationScreen(
         uri?.let { viewModel.onExportResult(it) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        TranslationScreenContent(
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { filePickerLauncher.launch(arrayOf("application/json")) },
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Icon(Icons.Default.FileOpen, contentDescription = "选择文件")
+            }
+        }
+    ) { paddingValues ->
+        HomeScreenContent(
             uiState = uiState,
-            progress = progress,
-            currentMode = currentMode,
-            currentModel = currentModel,
-            prohibitionCount = prohibitionCount,
-            selectedFileName = selectedFileName,
             isTranslating = isTranslating,
             isPaused = isPaused,
             isCompleted = isCompleted,
             isResumable = isResumable,
             resumableJob = resumableJob,
-            isExtracting = isExtracting,
-            extractionProgress = extractionProgress,
-            sourceLang = viewModel.sourceLang,
-            targetLang = viewModel.targetLang,
+            onFilePick = { filePickerLauncher.launch(arrayOf("application/json")) },
+            onTaskTypeChange = viewModel::onChangeTaskType,
             onSourceLangChange = viewModel::updateSourceLang,
             onTargetLangChange = viewModel::updateTargetLang,
-            onFilePick = { filePickerLauncher.launch(arrayOf("application/json")) },
-            onModeChange = viewModel::onChangeMode,
-            onStartClick = viewModel::onStartTranslation,
+            onStartClick = viewModel::onStartTask,
             onPauseClick = viewModel::onPauseTranslation,
             onResumeClick = viewModel::onResumeTranslation,
             onExportClick = { exportLauncher.launch("translated.txt") },
-            onExtractTermsClick = viewModel::extractTerms,
             onNavigateToSettings = onNavigateToSettings,
             onResumeJobClick = { jobId -> viewModel.resumeFromJob(jobId) },
-            onDismissResumeClick = viewModel::dismissResumable
-        )
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+            onDismissResumeClick = viewModel::dismissResumable,
+            modifier = Modifier.padding(paddingValues)
         )
 
         // Extraction review dialog
-        if (showExtractionReview) {
-            com.mtt.app.ui.glossary.ExtractionReviewDialog(
-                terms = extractedTerms,
-                existingTerms = emptyList(), // let dialog show all candidates
+        if (uiState.showExtractionReview) {
+            ExtractionReviewDialog(
+                terms = uiState.extractedTerms,
+                existingTerms = emptyList(),
                 onDismiss = { viewModel.cancelExtraction() },
                 onConfirm = { selected -> viewModel.confirmExtraction(selected) }
             )
@@ -195,44 +193,34 @@ fun TranslationScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TranslationScreenContent(
-    uiState: TranslationUiState,
-    progress: TranslationProgress,
-    currentMode: TranslationMode,
-    currentModel: ModelInfo?,
-    prohibitionCount: Int,
-    selectedFileName: String?,
+private fun HomeScreenContent(
+    uiState: HomeUiState,
     isTranslating: Boolean,
     isPaused: Boolean,
     isCompleted: Boolean,
     isResumable: Boolean = false,
-    resumableJob: TranslationUiState.Resumable? = null,
-    isExtracting: Boolean = false,
-    extractionProgress: ExtractionProgress = ExtractionProgress(0, 0),
-    sourceLang: String,
-    targetLang: String,
+    resumableJob: ScreenState.Resumable? = null,
+    onFilePick: () -> Unit,
+    onTaskTypeChange: (TaskType) -> Unit,
     onSourceLangChange: (String) -> Unit,
     onTargetLangChange: (String) -> Unit,
-    onFilePick: () -> Unit,
-    onModeChange: (TranslationMode) -> Unit,
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResumeClick: () -> Unit,
     onExportClick: () -> Unit,
-    onExtractTermsClick: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onResumeJobClick: (String) -> Unit = {},
-    onDismissResumeClick: () -> Unit = {}
+    onDismissResumeClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val languages = listOf("日语", "英语", "韩语", "中文", "自动检测")
     val numberFormat = NumberFormat.getNumberInstance(Locale.US)
-    var sourceLanguage by remember { mutableStateOf(sourceLang) }
-    var targetLanguage by remember { mutableStateOf(targetLang) }
-    var showModeHelpDialog by remember { mutableStateOf(false) }
+    val languages = listOf("中文", "英语", "日语", "韩语", "法语", "德语", "俄语", "西班牙语", "葡萄牙语")
+    var showTaskHelpDialog by remember { mutableStateOf(false) }
+    val isBusy = isTranslating || uiState.isExtracting
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
         Column(
@@ -240,24 +228,23 @@ private fun TranslationScreenContent(
                 .fillMaxSize()
                 .verticalScroll(scrollState)
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header
-            Text(
-                text = "翻译工具",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            // Header: title + model indicator
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "主页",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
 
             // Model indicator chip
-            val modelText = currentModel?.let { model ->
-                val providerName = when (model.provider) {
-                    is LlmProvider.OpenAI -> "OpenAI"
-                    is LlmProvider.Anthropic -> "Anthropic"
-                }
-                "$providerName: ${model.displayName}"
-            } ?: "未配置模型"
-
+            val modelText = uiState.currentModelName.ifEmpty { "未配置模型" }
             AssistChip(
                 onClick = onNavigateToSettings,
                 label = { Text(modelText) },
@@ -272,7 +259,74 @@ private fun TranslationScreenContent(
                 )
             )
 
-            // File selection area
+            // Task selector card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "任务选择",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        IconButton(
+                            onClick = { showTaskHelpDialog = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "任务模式说明",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TaskType.values().forEach { taskType ->
+                            val selected = uiState.taskType == taskType
+                            val label = when (taskType) {
+                                TaskType.TRANSLATE -> "翻译"
+                                TaskType.POLISH -> "润色"
+                                TaskType.PROOFREAD -> "校对"
+                                TaskType.EXTRACT -> "提取术语"
+                            }
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onTaskTypeChange(taskType) },
+                                label = { Text(label) },
+                                enabled = !isBusy,
+                                modifier = Modifier.weight(1f),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = MaterialTheme.colorScheme.outline,
+                                    selectedBorderColor = MaterialTheme.colorScheme.primary,
+                                    enabled = !isBusy,
+                                    selected = selected
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            // File selection card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -290,28 +344,28 @@ private fun TranslationScreenContent(
                     )
 
                     when {
-                        uiState is TranslationUiState.Loading -> {
+                        uiState.screenState is ScreenState.Loading -> {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.width(24.dp),
+                                    modifier = Modifier.size(24.dp),
                                     color = MaterialTheme.colorScheme.primary,
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = uiState.message,
+                                    text = (uiState.screenState as ScreenState.Loading).message,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        selectedFileName == null -> {
+                        uiState.selectedFileName == null -> {
                             Text(
-                                text = "请选择 JSON 文件以开始翻译",
+                                text = "请选择 JSON 文件以开始任务",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
@@ -321,7 +375,7 @@ private fun TranslationScreenContent(
                             Button(
                                 onClick = onFilePick,
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = !isTranslating
+                                enabled = !isBusy
                             ) {
                                 Text("选择 JSON 文件")
                             }
@@ -334,20 +388,20 @@ private fun TranslationScreenContent(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = selectedFileName,
+                                        text = uiState.selectedFileName,
                                         style = MaterialTheme.typography.titleSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "条目: ${numberFormat.format(progress.totalItems)}",
+                                        text = "条目: ${numberFormat.format(uiState.progress.totalItems)}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 OutlinedButton(
                                     onClick = onFilePick,
-                                    enabled = !isTranslating
+                                    enabled = !isBusy
                                 ) {
                                     Text("更换")
                                 }
@@ -357,7 +411,7 @@ private fun TranslationScreenContent(
                 }
             }
 
-            // Language selection
+            // Config area — changes based on taskType
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -368,120 +422,113 @@ private fun TranslationScreenContent(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "语言设置",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        LanguageDropdown(
-                            label = "源语言",
-                            selectedLanguage = sourceLanguage,
-                            languages = languages,
-                            onLanguageSelected = { lang ->
-                                sourceLanguage = lang
-                                onSourceLangChange(lang)
-                            },
-                            enabled = !isTranslating,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        LanguageDropdown(
-                            label = "目标语言",
-                            selectedLanguage = targetLanguage,
-                            languages = languages,
-                            onLanguageSelected = { lang ->
-                                targetLanguage = lang
-                                onTargetLangChange(lang)
-                            },
-                            enabled = !isTranslating,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-
-            // Mode selection
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "翻译模式",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        IconButton(
-                            onClick = { showModeHelpDialog = true },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = "翻译模式说明",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    when (uiState.taskType) {
+                        TaskType.EXTRACT -> {
+                            // Extract mode: source language only
+                            Text(
+                                text = "提取配置",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TranslationMode.values().forEach { mode ->
-                            val selected = currentMode == mode
-                            val modeText = when (mode) {
-                                TranslationMode.TRANSLATE -> "翻译"
-                                TranslationMode.POLISH -> "润色"
-                                TranslationMode.PROOFREAD -> "校对"
-                            }
-                            FilterChip(
-                                selected = selected,
-                                onClick = { onModeChange(mode) },
-                                label = { Text(modeText) },
-                                enabled = !isTranslating,
-                                modifier = Modifier.weight(1f),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    borderColor = MaterialTheme.colorScheme.outline,
-                                    selectedBorderColor = MaterialTheme.colorScheme.primary,
-                                    enabled = !isTranslating,
-                                    selected = selected
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                LanguageDropdown(
+                                    label = "源语言",
+                                    selectedLanguage = uiState.sourceLang,
+                                    languages = languages,
+                                    onLanguageSelected = { onSourceLangChange(it) },
+                                    enabled = !isBusy,
+                                    modifier = Modifier.weight(1f)
                                 )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Button(
+                                onClick = onStartClick,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = uiState.selectedFileName != null && !isBusy && !isCompleted
+                            ) {
+                                if (uiState.isExtracting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        if (uiState.extractionProgress.total > 0) {
+                                            "验证候选术语 ${uiState.extractionProgress.completed}/${uiState.extractionProgress.total}"
+                                        } else {
+                                            "正在分析文本..."
+                                        }
+                                    )
+                                } else {
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("开始提取")
+                                }
+                            }
+
+                            // Extraction progress
+                            if (uiState.isExtracting && uiState.extractionProgress.total > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                ExtractionProgressSection(progress = uiState.extractionProgress)
+                            }
+                        }
+                        else -> {
+                            // Translate/Polish/Proofread: source + target language
+                            Text(
+                                text = "翻译配置",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                LanguageDropdown(
+                                    label = "源语言",
+                                    selectedLanguage = uiState.sourceLang,
+                                    languages = languages,
+                                    onLanguageSelected = { onSourceLangChange(it) },
+                                    enabled = !isBusy,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                LanguageDropdown(
+                                    label = "目标语言",
+                                    selectedLanguage = uiState.targetLang,
+                                    languages = languages,
+                                    onLanguageSelected = { onTargetLangChange(it) },
+                                    enabled = !isBusy,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Button(
+                                onClick = onStartClick,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = uiState.selectedFileName != null && !isBusy && !isCompleted
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("开始翻译")
+                            }
                         }
                     }
                 }
             }
 
-            // Prohibition not active warning banner
-            if (currentMode != TranslationMode.TRANSLATE && prohibitionCount > 0) {
-                val modeName = when (currentMode) {
-                    TranslationMode.POLISH -> "润色"
-                    TranslationMode.PROOFREAD -> "校对"
+            // Prohibition warning for non-translate modes
+            if (uiState.taskType != TaskType.TRANSLATE && uiState.taskType != TaskType.EXTRACT && uiState.prohibitionCount > 0) {
+                val modeName = when (uiState.taskType) {
+                    TaskType.POLISH -> "润色"
+                    TaskType.PROOFREAD -> "校对"
                     else -> ""
                 }
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -490,11 +537,12 @@ private fun TranslationScreenContent(
                         Icon(
                             Icons.Default.Warning,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "当前为${modeName}模式，禁翻术语不生效（已配置 ${prohibitionCount} 条）",
+                            text = "当前为${modeName}模式，禁翻术语不生效（已配置 ${uiState.prohibitionCount} 条）",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -547,7 +595,7 @@ private fun TranslationScreenContent(
                 }
             }
 
-            // Token statistics (always visible)
+            // Token statistics
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -564,21 +612,23 @@ private fun TranslationScreenContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    val hasTokenData = progress.totalInputTokens > 0 || progress.totalOutputTokens > 0 || progress.totalCacheTokens > 0
+                    val hasTokenData = uiState.progress.totalInputTokens > 0 ||
+                            uiState.progress.totalOutputTokens > 0 ||
+                            uiState.progress.totalCacheTokens > 0
 
                     if (hasTokenData) {
                         Spacer(modifier = Modifier.height(8.dp))
                         TokenDonutChart(
                             data = TokenChartData(
-                                inputTokens = progress.totalInputTokens,
-                                outputTokens = progress.totalOutputTokens,
-                                cacheTokens = progress.totalCacheTokens
+                                inputTokens = uiState.progress.totalInputTokens,
+                                outputTokens = uiState.progress.totalOutputTokens,
+                                cacheTokens = uiState.progress.totalCacheTokens
                             )
                         )
                     } else {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "开始翻译后将在此处显示 Token 用量统计",
+                            text = "开始任务后将在此处显示 Token 用量统计",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -606,20 +656,20 @@ private fun TranslationScreenContent(
                         )
 
                         LinearProgressIndicator(
-                            progress = { progress.percentage / 100f },
+                            progress = { uiState.progress.percentage / 100f },
                             modifier = Modifier.fillMaxWidth(),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.primaryContainer
                         )
 
                         Text(
-                            text = "已完成 ${progress.completedItems}/${progress.totalItems} (${progress.percentage}%)",
+                            text = "已完成 ${uiState.progress.completedItems}/${uiState.progress.totalItems} (${uiState.progress.percentage}%)",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
 
                         Text(
-                            text = progress.status,
+                            text = uiState.progress.status,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -627,87 +677,56 @@ private fun TranslationScreenContent(
                 }
             }
 
-            // Control buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Start button
-                Button(
-                    onClick = onStartClick,
-                    modifier = Modifier.weight(1f),
-                    enabled = selectedFileName != null && !isTranslating && !isCompleted
+            // Control buttons for translation
+            if (uiState.taskType != TaskType.EXTRACT) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("开始")
-                }
-
-                // Pause/Resume button
-                if (isTranslating) {
-                    if (isPaused) {
-                        FilledTonalButton(
-                            onClick = onResumeClick,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("继续")
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = onPauseClick,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("暂停")
-                        }
+                    // Start button
+                    Button(
+                        onClick = onStartClick,
+                        modifier = Modifier.weight(1f),
+                        enabled = uiState.selectedFileName != null && !isTranslating && !isCompleted
+                    ) {
+                        Text("开始")
                     }
-                }
 
-                // Export button
-                Button(
-                    onClick = onExportClick,
-                    modifier = Modifier.weight(1f),
-                    enabled = isCompleted,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
-                ) {
-                    Text("导出")
-                }
-            }
-
-            // Glossary extraction button
-            if (selectedFileName != null && !isTranslating && !isCompleted) {
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onExtractTermsClick,
-                    enabled = !isTranslating && !isExtracting,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (isExtracting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            if (extractionProgress.total > 0) {
-                                "验证候选术语 ${extractionProgress.completed}/${extractionProgress.total}"
-                            } else {
-                                "正在分析文本..."
+                    // Pause/Resume button
+                    if (isTranslating) {
+                        if (isPaused) {
+                            FilledTonalButton(
+                                onClick = onResumeClick,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("继续")
                             }
+                        } else {
+                            OutlinedButton(
+                                onClick = onPauseClick,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("暂停")
+                            }
+                        }
+                    }
+
+                    // Export button
+                    Button(
+                        onClick = onExportClick,
+                        modifier = Modifier.weight(1f),
+                        enabled = isCompleted,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary
                         )
-                    } else {
-                        Text("从原文提取术语 (AI)")
+                    ) {
+                        Text("导出")
                     }
                 }
-            }
-
-            // Extraction progress section
-            if (isExtracting && extractionProgress.total > 0) {
-                Spacer(modifier = Modifier.height(4.dp))
-                ExtractionProgressSection(progress = extractionProgress)
             }
 
             // Error state
-            if (uiState is TranslationUiState.Error) {
+            if (uiState.screenState is ScreenState.Error) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -715,7 +734,7 @@ private fun TranslationScreenContent(
                     )
                 ) {
                     Text(
-                        text = uiState.message,
+                        text = (uiState.screenState as ScreenState.Error).message,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.padding(16.dp)
@@ -724,11 +743,12 @@ private fun TranslationScreenContent(
             }
         }
     }
-    
-    if (showModeHelpDialog) {
+
+    // Task mode help dialog
+    if (showTaskHelpDialog) {
         AlertDialog(
-            onDismissRequest = { showModeHelpDialog = false },
-            title = { Text("翻译模式说明") },
+            onDismissRequest = { showTaskHelpDialog = false },
+            title = { Text("任务模式说明") },
             text = {
                 Column {
                     Text(
@@ -741,7 +761,7 @@ private fun TranslationScreenContent(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
-                    
+
                     Text(
                         text = "润色（POLISH）",
                         style = MaterialTheme.typography.titleSmall,
@@ -752,7 +772,7 @@ private fun TranslationScreenContent(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
-                    
+
                     Text(
                         text = "校对（PROOFREAD）",
                         style = MaterialTheme.typography.titleSmall,
@@ -761,12 +781,23 @@ private fun TranslationScreenContent(
                     Text(
                         text = "对比原文检查目标语言文本的准确性，修正语法和漏译错误。需要原文+译文对照。禁翻规则不生效。",
                         style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    )
+
+                    Text(
+                        text = "提取术语（EXTRACT）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "AI 分析原文，自动提取术语、角色名和代码占位符，用于构建术语表。不执行翻译。",
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showModeHelpDialog = false }) {
+                TextButton(onClick = { showTaskHelpDialog = false }) {
                     Text("知道了")
                 }
             }
@@ -819,7 +850,6 @@ private fun LanguageDropdown(
     }
 }
 
-
 private fun getFileName(context: android.content.Context, uri: Uri): String {
     var fileName = "unknown.json"
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -831,120 +861,4 @@ private fun getFileName(context: android.content.Context, uri: Uri): String {
         }
     }
     return fileName
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun TranslationScreenPreview() {
-    MttTheme(dynamicColor = false) {
-        TranslationScreenContent(
-            uiState = TranslationUiState.Idle,
-            progress = TranslationProgress.initial(),
-            currentMode = TranslationMode.TRANSLATE,
-            currentModel = ModelInfo(
-                modelId = "gpt-4o-mini",
-                displayName = "GPT-4o Mini",
-                contextWindow = 128000,
-                provider = LlmProvider.OpenAI("")
-            ),
-            prohibitionCount = 0,
-            selectedFileName = null,
-            isTranslating = false,
-            isPaused = false,
-            isCompleted = false,
-            sourceLang = "日语",
-            targetLang = "中文",
-            onSourceLangChange = {},
-            onTargetLangChange = {},
-            onFilePick = {},
-            onModeChange = {},
-            onStartClick = {},
-            onPauseClick = {},
-            onResumeClick = {},
-            onExportClick = {},
-            onNavigateToSettings = {}
-        )
-    }
-}
-
-@Preview(showBackground = true, showSystemUi = true, uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES)
-@Composable
-private fun TranslationScreenDarkPreview() {
-    MttTheme(darkTheme = true, dynamicColor = false) {
-        TranslationScreenContent(
-            uiState = TranslationUiState.Idle,
-            progress = TranslationProgress.initial(),
-            currentMode = TranslationMode.TRANSLATE,
-            currentModel = ModelInfo(
-                modelId = "claude-3-5-haiku",
-                displayName = "Claude 3.5 Haiku",
-                contextWindow = 200000,
-                provider = LlmProvider.Anthropic("")
-            ),
-            prohibitionCount = 0,
-            selectedFileName = "example.json",
-            isTranslating = false,
-            isPaused = false,
-            isCompleted = false,
-            sourceLang = "日语",
-            targetLang = "中文",
-            onSourceLangChange = {},
-            onTargetLangChange = {},
-            onFilePick = {},
-            onModeChange = {},
-            onStartClick = {},
-            onPauseClick = {},
-            onResumeClick = {},
-            onExportClick = {},
-            onNavigateToSettings = {}
-        )
-    }
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun TranslationScreenTranslatingPreview() {
-    MttTheme(dynamicColor = false) {
-        TranslationScreenContent(
-            uiState = TranslationUiState.Translating(
-                TranslationProgress(
-                    totalItems = 150,
-                    completedItems = 75,
-                    currentBatch = 5,
-                    totalBatches = 10,
-                    status = "正在翻译第 5 批..."
-                )
-            ),
-            progress = TranslationProgress(
-                totalItems = 150,
-                completedItems = 75,
-                currentBatch = 5,
-                totalBatches = 10,
-                status = "正在翻译第 5 批..."
-            ),
-            currentMode = TranslationMode.TRANSLATE,
-            currentModel = ModelInfo(
-                modelId = "gpt-4o-mini",
-                displayName = "GPT-4o Mini",
-                contextWindow = 128000,
-                provider = LlmProvider.OpenAI("")
-            ),
-            prohibitionCount = 0,
-            selectedFileName = "example.json",
-            isTranslating = true,
-            isPaused = false,
-            isCompleted = false,
-            sourceLang = "日语",
-            targetLang = "中文",
-            onSourceLangChange = {},
-            onTargetLangChange = {},
-            onFilePick = {},
-            onModeChange = {},
-            onStartClick = {},
-            onPauseClick = {},
-            onResumeClick = {},
-            onExportClick = {},
-            onNavigateToSettings = {}
-        )
-    }
 }
