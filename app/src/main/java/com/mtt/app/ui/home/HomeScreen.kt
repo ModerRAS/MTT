@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -191,7 +193,7 @@ fun HomeScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HomeScreenContent(
     uiState: HomeUiState,
@@ -292,9 +294,10 @@ private fun HomeScreenContent(
                         }
                     }
 
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         TaskType.values().forEach { taskType ->
                             val selected = uiState.taskType == taskType
@@ -307,9 +310,8 @@ private fun HomeScreenContent(
                             FilterChip(
                                 selected = selected,
                                 onClick = { onTaskTypeChange(taskType) },
-                                label = { Text(label) },
+                                label = { Text(label, maxLines = 1) },
                                 enabled = !isBusy,
-                                modifier = Modifier.weight(1f),
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -503,16 +505,6 @@ private fun HomeScreenContent(
                                     enabled = !isBusy,
                                     modifier = Modifier.weight(1f)
                                 )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Button(
-                                onClick = onStartClick,
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = uiState.selectedFileName != null && !isBusy && !isCompleted
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("开始翻译")
                             }
                         }
                     }
