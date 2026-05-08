@@ -222,9 +222,9 @@ class TranslationViewModelTest {
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Processing"),
-            BatchResult.Progress(batchIndex = 0, completed = 2, total = 3, stage = "Processing"),
-            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 42)
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Processing", inputTokens = 0, outputTokens = 0),
+            BatchResult.Progress(batchIndex = 0, completed = 2, total = 3, stage = "Processing", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 42, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -243,8 +243,8 @@ class TranslationViewModelTest {
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 2),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 2, stage = "Chunk 1"),
-            BatchResult.Success(batchIndex = 0, items = listOf("A", "B"), tokensUsed = 10)
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 2, stage = "Chunk 1", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("A", "B"), tokensUsed = 10, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -307,8 +307,8 @@ class TranslationViewModelTest {
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 2),
             BatchResult.Retrying(batchIndex = 0, attempt = 1, reason = "Validation TooFew"),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 2, stage = "Retry chunk"),
-            BatchResult.Success(batchIndex = 0, items = listOf("A", "B"), tokensUsed = 10)
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 2, stage = "Retry chunk", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("A", "B"), tokensUsed = 10, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -332,7 +332,7 @@ class TranslationViewModelTest {
         // Emit started but never finish — flow is suspended
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Working...")
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Working...", inputTokens = 0, outputTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -356,8 +356,8 @@ class TranslationViewModelTest {
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Processing"),
-            BatchResult.Success(batchIndex = 0, items = listOf("X", "Y", "Z"), tokensUsed = 10)
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Processing", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("X", "Y", "Z"), tokensUsed = 10, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onResumeTranslation()
@@ -377,7 +377,7 @@ class TranslationViewModelTest {
         advanceUntilIdle()
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 42)
+            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 42, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
         viewModel.onStartTranslation()
         advanceUntilIdle()
@@ -437,8 +437,8 @@ class TranslationViewModelTest {
         // 3. Translate
         coEvery { useCase.invoke(any(), match { it.mode == TranslationMode.POLISH }) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Polishing"),
-            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 30)
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Polishing", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("Hola", "Mundo", "Test"), tokensUsed = 30, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -467,7 +467,7 @@ class TranslationViewModelTest {
 
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Part 1")
+            BatchResult.Progress(batchIndex = 0, completed = 1, total = 3, stage = "Part 1", inputTokens = 0, outputTokens = 0)
         )
 
         viewModel.onStartTranslation()
@@ -482,8 +482,8 @@ class TranslationViewModelTest {
         // Resume — sets up new mock for the restart
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Progress(batchIndex = 0, completed = 2, total = 3, stage = "Part 2"),
-            BatchResult.Success(batchIndex = 0, items = listOf("A", "B", "C"), tokensUsed = 20)
+            BatchResult.Progress(batchIndex = 0, completed = 2, total = 3, stage = "Part 2", inputTokens = 0, outputTokens = 0),
+            BatchResult.Success(batchIndex = 0, items = listOf("A", "B", "C"), tokensUsed = 20, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
 
         viewModel.onResumeTranslation()
@@ -500,7 +500,7 @@ class TranslationViewModelTest {
         advanceUntilIdle()
         coEvery { useCase.invoke(any(), any()) } returns flowOf(
             BatchResult.Started(batchIndex = 0, size = 3),
-            BatchResult.Success(batchIndex = 0, items = listOf("A", "B", "C"), tokensUsed = 10)
+            BatchResult.Success(batchIndex = 0, items = listOf("A", "B", "C"), tokensUsed = 10, inputTokens = 0, outputTokens = 0, cacheTokens = 0)
         )
         viewModel.onStartTranslation()
         advanceUntilIdle()

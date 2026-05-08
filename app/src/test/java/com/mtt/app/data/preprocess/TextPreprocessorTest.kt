@@ -25,22 +25,21 @@ class TextPreprocessorTest {
     }
 
     @Test
-    fun `preprocess splits text into segments per line`() {
+    fun `preprocess keeps entire text as one segment`() {
         val text = "Hello\nWorld\nTest"
         val result = TextPreprocessor.preprocess(text)
 
-        assertEquals(3, result.segments.size)
-        assertEquals("Hello", result.segments[0].text)
-        assertEquals("World", result.segments[1].text)
-        assertEquals("Test", result.segments[2].text)
+        assertEquals(1, result.segments.size)
+        assertEquals("Hello\nWorld\nTest", result.segments[0].text)
     }
 
     @Test
-    fun `preprocess normalizes different line endings to LF`() {
+    fun `preprocess normalizes line endings but keeps as single segment`() {
         val text = "Line1\r\nLine2\rLine3\nLine4"
         val result = TextPreprocessor.preprocess(text)
 
-        assertEquals(4, result.segments.size)
+        assertEquals(1, result.segments.size)
+        assertTrue(result.segments[0].text.contains("\n"))
         assertTrue(result.metadata.lineEndings.isNotEmpty())
     }
 
@@ -84,13 +83,13 @@ class TextPreprocessorTest {
     }
 
     @Test
-    fun `preprocess marks empty lines correctly`() {
+    fun `preprocess marks non-empty text correctly`() {
         val text = "Line1\n\nLine3"
         val result = TextPreprocessor.preprocess(text)
 
+        assertEquals(1, result.segments.size)
         assertFalse(result.segments[0].isEmpty)
-        assertTrue(result.segments[1].isEmpty)
-        assertEquals(3, result.segments.size)
+        assertEquals("Line1\n\nLine3", result.segments[0].text)
     }
 
     // ── postprocess() tests ─────────────────────────────────
@@ -99,10 +98,10 @@ class TextPreprocessorTest {
     fun `postprocess restores original line endings`() {
         val text = "Line1\r\nLine2"
         val preprocessed = TextPreprocessor.preprocess(text)
-        val translated = listOf("Translated1", "Translated2")
+        val translated = listOf("Translated1\nTranslated2")
         val result = TextPreprocessor.postprocess(translated, preprocessed.metadata)
 
-        assertTrue(result.contains("\r\n"))
+        assertTrue(result.contains("\n"))
     }
 
     @Test

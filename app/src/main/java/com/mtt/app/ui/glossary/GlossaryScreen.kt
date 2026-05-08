@@ -251,10 +251,11 @@ fun GlossaryScreen(
         GlossaryEntryDialog(
             editingEntry = null,
             onDismiss = { showAddDialog = false },
-            onConfirm = { source, target, type ->
-                viewModel.addEntry(source, target, type)
+            onConfirmWithInfo = { source, target, type, info ->
+                viewModel.addEntry(source, target, type, info)
                 showAddDialog = false
-            }
+            },
+            onConfirm = { _, _, _ -> }
         )
     }
     
@@ -262,12 +263,13 @@ fun GlossaryScreen(
         GlossaryEntryDialog(
             editingEntry = editingEntry,
             onDismiss = { editingEntry = null },
-            onConfirm = { source, target, type ->
-                editingEntry?.let { 
-                    viewModel.updateEntry(it.copy(sourceTerm = source, targetTerm = target, matchType = type)) 
+            onConfirmWithInfo = { source, target, type, info ->
+                editingEntry?.let {
+                    viewModel.updateEntry(it.copy(sourceTerm = source, targetTerm = target, matchType = type, info = info))
                 }
                 editingEntry = null
-            }
+            },
+            onConfirm = { _, _, _ -> }
         )
     }
     
@@ -690,11 +692,13 @@ private fun GlossaryEntryItem(
 fun GlossaryEntryDialog(
     editingEntry: GlossaryEntryUiModel?,
     onDismiss: () -> Unit,
-    onConfirm: (sourceTerm: String, targetTerm: String, matchType: String) -> Unit
+    onConfirm: (sourceTerm: String, targetTerm: String, matchType: String) -> Unit,
+    onConfirmWithInfo: ((sourceTerm: String, targetTerm: String, matchType: String, info: String) -> Unit)? = null
 ) {
     var sourceTerm by rememberSaveable { mutableStateOf(editingEntry?.sourceTerm ?: "") }
     var targetTerm by rememberSaveable { mutableStateOf(editingEntry?.targetTerm ?: "") }
     var matchType by rememberSaveable { mutableStateOf(editingEntry?.matchType ?: "EXACT") }
+    var entryInfo by rememberSaveable { mutableStateOf(editingEntry?.info ?: "") }
     var matchTypeExpanded by remember { mutableStateOf(false) }
     
     val matchTypes = listOf("EXACT", "REGEX", "CASE_INSENSITIVE")
@@ -758,11 +762,27 @@ fun GlossaryEntryDialog(
                         }
                     }
                 }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                OutlinedTextField(
+                    value = entryInfo,
+                    onValueChange = { entryInfo = it },
+                    label = { Text("备注（可选）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(sourceTerm, targetTerm, matchType) },
+                onClick = {
+                    if (onConfirmWithInfo != null) {
+                        onConfirmWithInfo(sourceTerm, targetTerm, matchType, entryInfo)
+                    } else {
+                        onConfirm(sourceTerm, targetTerm, matchType)
+                    }
+                },
                 enabled = sourceTerm.isNotBlank()
             ) {
                 Text("确认")

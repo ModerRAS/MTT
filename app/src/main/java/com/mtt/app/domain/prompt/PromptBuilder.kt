@@ -137,7 +137,8 @@ object PromptBuilder {
         sb.appendLine("3. 使用Glossary中的术语翻译，保持一致性")
         sb.appendLine("4. 禁止翻译DoNotTranslate列表中的词汇，保持原文")
         sb.appendLine("5. 保持原文的语气、风格和格式")
-        sb.appendLine("6. 一次性输出全部条目的翻译，不要遗漏")
+        sb.appendLine("6. 原文中的换行符(\\n)、回车符(\\r)、制表符(\\t)等控制字符是内容的一部分，必须在译文中保留相同数量")
+        sb.appendLine("7. 一次性输出全部条目的翻译，不要遗漏")
 
         appendOptionalPromptSection(sb, glossary)
         appendOptionalPromptSection(sb, prohibition)

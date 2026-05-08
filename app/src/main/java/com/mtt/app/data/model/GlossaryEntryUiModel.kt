@@ -10,6 +10,7 @@ package com.mtt.app.data.model
  * @param targetTerm The target language term
  * @param matchType Matching strategy: "EXACT", "REGEX", or "CASE_INSENSITIVE"
  * @param isProhibition Whether this is a prohibition rule (empty targetTerm)
+ * @param info Optional description/remarks for the glossary entry
  */
 data class GlossaryEntryUiModel(
     val id: Long = 0,
@@ -17,7 +18,8 @@ data class GlossaryEntryUiModel(
     val sourceTerm: String,
     val targetTerm: String,
     val matchType: String = "EXACT",
-    val isProhibition: Boolean = targetTerm.isEmpty()
+    val isProhibition: Boolean = targetTerm.isEmpty(),
+    val info: String = ""
 )
 
 /**
@@ -29,7 +31,8 @@ fun GlossaryEntryEntity.toUiModel(): GlossaryEntryUiModel = GlossaryEntryUiModel
     sourceTerm = sourceTerm,
     targetTerm = targetTerm,
     matchType = matchType,
-    isProhibition = targetTerm.isEmpty()
+    isProhibition = targetTerm.isEmpty(),
+    info = info
 )
 
 /**
@@ -40,5 +43,6 @@ fun GlossaryEntryUiModel.toEntity(): GlossaryEntryEntity = GlossaryEntryEntity(
     projectId = projectId,
     sourceTerm = sourceTerm,
     targetTerm = targetTerm,
-    matchType = matchType
+    matchType = matchType,
+    info = info
 )

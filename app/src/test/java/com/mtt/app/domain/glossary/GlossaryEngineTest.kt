@@ -46,8 +46,8 @@ class GlossaryEngineTest {
     @Test
     fun `match finds multiple matches`() {
         val glossary = listOf(
-            GlossaryEntry("HP", "Health"),
-            GlossaryEntry("MP", "Magic")
+            GlossaryEntry("HP", "Health", isCaseSensitive = true),
+            GlossaryEntry("MP", "Magic", isCaseSensitive = true)
         )
         val result = GlossaryEngine.match("HP and MP are important stats", glossary)
 
@@ -122,7 +122,7 @@ class GlossaryEngineTest {
 
     @Test
     fun `isProhibited returns false for empty prohibition list`() {
-        val result = GlossaryEngine.isProhibited("Any text", emptyList())
+        val result = GlossaryEngine.isProhibited("Any text", emptyList<String>())
         assertFalse(result)
     }
 

@@ -270,7 +270,7 @@ class GlossaryViewModel @Inject constructor(
      * Rejects empty sourceTerm. Detects duplicate sourceTerm and shows error.
      * Empty targetTerm creates a prohibition entry.
      */
-    fun addEntry(sourceTerm: String, targetTerm: String, matchType: String) {
+    fun addEntry(sourceTerm: String, targetTerm: String, matchType: String, info: String = "") {
         viewModelScope.launch {
             try {
                 if (sourceTerm.isBlank()) {
@@ -288,7 +288,8 @@ class GlossaryViewModel @Inject constructor(
                     projectId = currentProjectId,
                     sourceTerm = sourceTerm,
                     targetTerm = targetTerm,
-                    matchType = matchType
+                    matchType = matchType,
+                    info = info
                 )
                 glossaryDao.insertAll(listOf(entity))
                 loadGlossaryData()
@@ -560,7 +561,8 @@ class GlossaryViewModel @Inject constructor(
             source = sourceTerm,
             target = targetTerm,
             isRegex = matchType == GlossaryEntryEntity.MATCH_TYPE_REGEX,
-            isCaseSensitive = matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE
+            isCaseSensitive = matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE,
+            remark = info
         )
     }
 }

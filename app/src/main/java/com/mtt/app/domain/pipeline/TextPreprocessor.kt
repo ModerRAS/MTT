@@ -256,44 +256,30 @@ object TextPreprocessor {
      * and marking empty lines.
      */
     private fun buildSegments(text: String): List<Segment> {
-        val lines = text.split('\n')
-        val segments = mutableListOf<Segment>()
-        var index = 1
-
-        for (line in lines) {
-            if (line.isEmpty() || line.trim().isEmpty()) {
-                segments.add(
-                    Segment(index = index, text = "", isEmpty = true)
-                )
-            } else {
-                val prefixLength = line.length - line.trimStart().length
-                val suffixLength = line.length - line.trimEnd().length
-
-                val prefix = if (prefixLength > 0) line.substring(0, prefixLength) else ""
-                val core = if (suffixLength > 0) {
-                    // Guard: prefix + suffix may cover the whole line (whitespace-only edge case)
-                    val end = line.length - suffixLength
-                    if (end <= prefixLength) "" else line.substring(prefixLength, end)
-                } else {
-                    line.substring(prefixLength)
-                }
-                val suffix = if (suffixLength > 0) {
-                    line.substring(line.length - suffixLength)
-                } else ""
-
-                segments.add(
-                    Segment(
-                        index = index,
-                        text = core,
-                        prefix = prefix,
-                        suffix = suffix
-                    )
-                )
-            }
-            index++
+        // Keep the entire text as a single segment — do NOT split by \n.
+        // Newlines are content, not structural delimiters.
+        // The LLM understands \n and should preserve it in translations.
+        if (text.isEmpty() || text.trim().isEmpty()) {
+            return listOf(Segment(index = 1, text = "", isEmpty = true))
         }
 
-        return segments
+        val prefixLength = text.length - text.trimStart().length
+        val suffixLength = text.length - text.trimEnd().length
+
+        val prefix = if (prefixLength > 0) text.substring(0, prefixLength) else ""
+        val core = if (suffixLength > 0) {
+            val end = text.length - suffixLength
+            if (end <= prefixLength) "" else text.substring(prefixLength, end)
+        } else {
+            text.substring(prefixLength)
+        }
+        val suffix = if (suffixLength > 0) {
+            text.substring(text.length - suffixLength)
+        } else ""
+
+        return listOf(
+            Segment(index = 1, text = core, prefix = prefix, suffix = suffix)
+        )
     }
 
     // ── Private: LLM safety escaping ───────────────────

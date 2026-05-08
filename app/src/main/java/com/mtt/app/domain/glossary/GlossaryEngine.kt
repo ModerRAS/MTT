@@ -2,6 +2,7 @@ package com.mtt.app.domain.glossary
 
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.domain.pipeline.SkipPatterns
+import kotlin.jvm.JvmName
 
 /**
  * A glossary entry defining a source-to-target term mapping.
@@ -20,7 +21,8 @@ data class GlossaryEntry(
     val source: String,
     val target: String,
     val isRegex: Boolean = false,
-    val isCaseSensitive: Boolean = true
+    val isCaseSensitive: Boolean = false,
+    val remark: String = ""
 )
 
 /**
@@ -132,6 +134,32 @@ object GlossaryEngine {
     }
 
     // ──────────────────────────────────────────────
+    //  Context-aware filtering
+    // ──────────────────────────────────────────────
+
+    /**
+     * Filters glossary entries to only those whose source term actually appears
+     * in the given [texts]. This prevents bloating the LLM prompt with irrelevant
+     * glossary entries, matching AiNiee's context-aware glossary approach.
+     *
+     * @param entries Full list of glossary entries
+     * @param texts   Batch of source texts to check against
+     * @return Only entries whose source term matches any of [texts]
+     */
+    fun filterByTexts(entries: List<GlossaryEntry>, texts: List<String>): List<GlossaryEntry> {
+        if (entries.isEmpty() || texts.isEmpty()) return emptyList()
+        val combined = texts.joinToString("\n")
+        return entries.filter { entry ->
+            try {
+                val pattern = buildPattern(entry)
+                pattern.containsMatchIn(combined)
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────
     //  Prohibition
     // ──────────────────────────────────────────────
 
@@ -147,6 +175,28 @@ object GlossaryEngine {
      */
     fun isProhibited(text: String, prohibited: List<String>): Boolean {
         return prohibited.any { text.contains(it) }
+    }
+
+    /**
+     * Checks whether [text] contains any term from the prohibition list (禁翻表)
+     * with regex support. Each entry's [GlossaryEntry.source] is matched using
+     * [buildPattern] — supporting exact, regex, and case-insensitive prohibition rules.
+     *
+     * @param text      The text to check
+     * @param entries   Prohibition entries (target is empty) with match type
+     * @return true if any entry's pattern matches [text]
+     */
+    @JvmName("isProhibitedByEntries")
+    fun isProhibited(text: String, entries: List<GlossaryEntry>): Boolean {
+        for (entry in entries) {
+            try {
+                val pattern = buildPattern(entry)
+                if (pattern.containsMatchIn(text)) return true
+            } catch (_: Exception) {
+                continue
+            }
+        }
+        return false
     }
 
     // ──────────────────────────────────────────────
@@ -247,7 +297,8 @@ object GlossaryEngine {
         sb.appendLine("###术语表")
         sb.appendLine("原文|译文|备注")
         for (entry in filtered) {
-            sb.appendLine("${entry.source}|${entry.target}|")
+            val remark = entry.remark.takeIf { it.isNotBlank() } ?: " "
+            sb.appendLine("${entry.source}|${entry.target}|$remark")
         }
         return sb.toString()
     }

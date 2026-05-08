@@ -20,6 +20,7 @@ import com.mtt.app.data.remote.llm.LlmServiceFactory
 import com.mtt.app.data.remote.openai.OpenAiClient
 import com.mtt.app.domain.glossary.GlossaryEngine
 import com.mtt.app.domain.glossary.GlossaryEntry
+import com.mtt.app.domain.glossary.ProtectResult
 import com.mtt.app.domain.prompt.PromptBuilder
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -220,10 +221,14 @@ class TranslationExecutor @Inject constructor(
                 source = entity.sourceTerm,
                 target = entity.targetTerm,
                 isRegex = entity.matchType == GlossaryEntryEntity.MATCH_TYPE_REGEX,
-                isCaseSensitive = entity.matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE
+                isCaseSensitive = entity.matchType != GlossaryEntryEntity.MATCH_TYPE_CASE_INSENSITIVE,
+                remark = entity.info
             )
         }
-        val glossarySection = GlossaryEngine.buildGlossarySection(glossaryEntries, config.mode)
+        // Context-aware filtering: only include terms that appear in the batch texts
+        val batchTexts = llmPositions.map { globalNonEmptyItems[it].second }
+        val relevantGlossary = GlossaryEngine.filterByTexts(glossaryEntries, batchTexts)
+        val glossarySection = GlossaryEngine.buildGlossarySection(relevantGlossary, config.mode)
         val prohibitionSection = if (config.mode == TranslationMode.TRANSLATE) {
             GlossaryEngine.buildProhibitionSection(glossaryEntries)
         } else ""
@@ -262,7 +267,7 @@ class TranslationExecutor @Inject constructor(
                                 globalNonEmptyItems[pos]
                             }
                             val chunkResult = executeLlmAgentLoop(
-                                chunkItems, config, glossarySection, prohibitionSection
+                                chunkItems, config, glossarySection, prohibitionSection, relevantGlossary
                             )
                             // Map local positions back to global positions
                             val globalTranslations = mutableMapOf<Int, String>()
@@ -470,7 +475,8 @@ class TranslationExecutor @Inject constructor(
         items: List<Pair<Int, String>>,
         config: TranslationConfig,
         glossarySection: String,
-        prohibitionSection: String
+        prohibitionSection: String,
+        glossaryEntries: List<GlossaryEntry> = emptyList()
     ): LlmChunkResult {
         if (items.isEmpty()) {
             return LlmChunkResult(translations = emptyMap(), tokensUsed = 0, inputTokens = 0, outputTokens = 0)
@@ -511,11 +517,34 @@ class TranslationExecutor @Inject constructor(
         var iteration = 0
         val MAX_ITERATIONS = 5
 
+        // ── Glossary protect: replace source terms with {GLO_N} placeholders ──
+        // Prevents the LLM from mistranslating known terms; placeholders are
+        // restored to target terms after receiving the LLM response.
+        val itemProtectResults: Map<Int, ProtectResult> = if (glossaryEntries.isNotEmpty()) {
+            items.indices.associate { idx ->
+                idx to GlossaryEngine.protect(items[idx].second, glossaryEntries)
+            }
+        } else {
+            emptyMap()
+        }
+
+        fun protectedText(pos: Int): String =
+            itemProtectResults[pos]?.protectedText ?: items[pos].second
+
+        fun placeholdersFor(pos: Int): Map<String, String> =
+            itemProtectResults[pos]?.placeholders ?: emptyMap()
+
+        fun restoreTranslation(pos: Int, translated: String): String =
+            GlossaryEngine.restore(translated, placeholdersFor(pos))
+
         while (remainingLocalPositions.isNotEmpty() && iteration < MAX_ITERATIONS) {
             iteration++
 
-            val remainingItems = remainingLocalPositions.map { items[it] }
-            val retryPrompt = buildPrompt(remainingItems, config, glossarySection, prohibitionSection, "")
+            // Use protected text for prompt building
+            val protectedPairs = remainingLocalPositions.map { pos ->
+                items[pos].first to protectedText(pos)
+            }
+            val retryPrompt = buildPrompt(protectedPairs, config, glossarySection, prohibitionSection, "")
 
             val response = try {
                 val llmConfig = LlmRequestConfig(
@@ -557,12 +586,14 @@ class TranslationExecutor @Inject constructor(
                     } else {
                         numPrefix.replaceFirst(rawTranslated, "")
                     }
+                    // Restore glossary placeholders → target terms
+                    val restored = restoreTranslation(globalPos, translated)
                     // Check that control characters (\n, \r, \t) are preserved
-                    if (!hasControlCharsPreserved(originalText, translated)) {
+                    if (!hasControlCharsPreserved(originalText, restored)) {
                         AppLogger.d(TAG, "Control char loss for #${items[globalPos].first}, will retry")
                         newlineRetry.add(globalPos)
                     } else {
-                        localResultMap[globalPos] = translated
+                        localResultMap[globalPos] = restored
                     }
                 }
                 // Keep unmatched items + newline-retry items for next iteration

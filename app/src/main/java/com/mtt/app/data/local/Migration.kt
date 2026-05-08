@@ -53,7 +53,20 @@ object Migration {
     }
 
     /**
+     * Migration from version 2 to 3.
+     *
+     * Adds `info` column to `glossary_entries` for entry descriptions/remarks.
+     */
+    val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+            database.execSQL(
+                "ALTER TABLE `glossary_entries` ADD COLUMN `info` TEXT NOT NULL DEFAULT ''"
+            )
+        }
+    }
+
+    /**
      * All migrations for database construction.
      */
-    val ALL_MIGRATIONS = listOf(MIGRATION_1_2)
+    val ALL_MIGRATIONS = listOf(MIGRATION_1_2, MIGRATION_2_3)
 }

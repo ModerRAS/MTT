@@ -26,7 +26,7 @@ import com.mtt.app.data.model.TranslationJobEntity
         TranslationJobEntity::class,
         ExtractionJobEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

@@ -23,7 +23,10 @@ data class GlossaryEntryEntity(
     val targetTerm: String,
 
     @ColumnInfo(name = "match_type")
-    val matchType: String = "EXACT"
+    val matchType: String = "EXACT",
+
+    @ColumnInfo(name = "info")
+    val info: String = ""
 ) {
     companion object {
         const val MATCH_TYPE_EXACT = "EXACT"
