@@ -8,12 +8,12 @@ import okhttp3.Response
  * Logging interceptor for OkHttp requests.
  *
  * Security features:
- * - NEVER logs full request/response bodies in production
+ * - NEVER logs request/response bodies; they may contain source text or model output
  * - REDACTs Authorization headers (API keys)
  * - REDACTs sensitive data patterns from logs
  *
  * Log levels:
- * - DEBUG builds: BODY level (full headers + truncated bodies)
+ * - DEBUG builds: HEADERS level only
  * - RELEASE builds: HEADERS level only
  */
 object LoggingInterceptor {
@@ -31,13 +31,13 @@ object LoggingInterceptor {
 
     /**
      * Create a logging interceptor configured for DEBUG builds.
-     * Logs headers and truncated bodies (max 500 chars).
+     * Logs headers only; request/response bodies may contain user text or LLM output.
      */
     fun forDebug(): HttpLoggingInterceptor {
         return HttpLoggingInterceptor { message ->
             logSafe(message, Log.DEBUG)
         }.apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.HEADERS
         }
     }
 
