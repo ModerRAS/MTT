@@ -233,6 +233,11 @@ class TranslationService : Service() {
                         is BatchResult.RetryComplete -> {
                             AppLogger.w(TAG, "Retry complete: ${result.finalFailedItems.size} items permanently failed")
                             pendingFailedItems = result.finalFailedItems
+                            // Update status (distinct from "翻译中") so collectLatest fires immediately
+                            _serviceProgress.value = _serviceProgress.value.copy(
+                                status = "重试完成 (${result.finalFailedItems.size} 项失败)",
+                                failedItems = result.finalFailedItems
+                            )
                         }
                     }
                     // Immediate notification refresh on each progress event

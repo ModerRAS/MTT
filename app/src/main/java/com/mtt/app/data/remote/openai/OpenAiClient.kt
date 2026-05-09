@@ -351,10 +351,10 @@ class OpenAiClient(
                 root.put("tools", tools)
             }
 
-            val choice = JSONObject()
-            choice.put("type", "function")
-            choice.put("function", JSONObject().apply { put("name", toolChoice) })
-            root.put("tool_choice", choice)
+            // Use "auto" string format for tool_choice instead of object format.
+            // Object format {type:"function", function:{name:"..."}} is not supported by LM Studio.
+            // "auto" lets the model decide whether to use tools (supported by both OpenAI and LM Studio).
+            root.put("tool_choice", "auto")
         }
 
         return root.toString()

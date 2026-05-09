@@ -15,7 +15,8 @@ data class TranslationProgress(
     val status: String,
     val totalInputTokens: Long = 0,
     val totalOutputTokens: Long = 0,
-    val totalCacheTokens: Long = 0
+    val totalCacheTokens: Long = 0,
+    val failedItems: List<FailedItem> = emptyList()
 ) {
     val percentage: Int
         get() = if (totalItems > 0) (completedItems * 100) / totalItems else 0
