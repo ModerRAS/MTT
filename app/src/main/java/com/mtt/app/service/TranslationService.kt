@@ -84,6 +84,7 @@ class TranslationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        AppLogger.d(TAG, "onStartCommand: action=${intent?.action}, startId=$startId, intent=$intent")
         when (intent?.action) {
             ACTION_START -> handleStart()
             ACTION_STOP -> handleStop()
@@ -109,31 +110,20 @@ class TranslationService : Service() {
     private fun handleStart() {
         // Snapshot pending data (set by ViewModel before starting)
         val texts = pendingTexts.toList()
-        val config = pendingConfig ?: return
+        val config = pendingConfig
         val jobId = pendingJobId
         pendingTexts = emptyList()
         pendingConfig = null
         pendingJobId = null
 
-        // Load and validate the persisted job
-        currentJobId = jobId
-        if (jobId != null) {
-            serviceScope.launch {
-                try {
-                    val now = System.currentTimeMillis()
-                    translationJobDao.updateProgress(
-                        jobId = jobId,
-                        status = TranslationJobEntity.STATUS_IN_PROGRESS,
-                        completedItems = 0,
-                        updatedAt = now
-                    )
-                } catch (_: Exception) {
-                    // Non-critical: job tracking failure doesn't block translation
-                }
-            }
+        AppLogger.d(TAG, "handleStart: texts.size=${texts.size}, config=${config != null}, jobId=$jobId")
+
+        if (config == null) {
+            AppLogger.w(TAG, "handleStart: pendingConfig is null, returning without starting")
+            return
         }
 
-        acquireWakeLock()
+        currentJobId = jobId
 
         // Initialize progress and show foreground notification IMMEDIATELY
         // (must call startForeground within ~5s to avoid ANR)
@@ -146,7 +136,23 @@ class TranslationService : Service() {
         )
         startForeground(NOTIFICATION_ID_TRANSLATION, buildTranslationNotification())
 
+        acquireWakeLock()
+
         activeJob = serviceScope.launch {
+            // Persist job status in background (non-critical, so exceptions ignored)
+            if (jobId != null) {
+                try {
+                    translationJobDao.updateProgress(
+                        jobId = jobId,
+                        status = TranslationJobEntity.STATUS_IN_PROGRESS,
+                        completedItems = 0,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } catch (_: Exception) {
+                    // Non-critical: job tracking failure doesn't block translation
+                }
+            }
+
             // Resolve cache projectId from job's source file name (for file-scoped caching)
             val cacheProjectId = if (jobId != null) {
                 try {
@@ -294,7 +300,8 @@ class TranslationService : Service() {
 
         currentExtractionJobId = extractionJobId
 
-        // Initialize progress and show foreground notification
+        // Show foreground notification IMMEDIATELY to avoid ANR
+        // (must call startForeground within ~5s to avoid ANR)
         _extractionProgress.value = ExtractionProgress(0, 0)
         startForeground(NOTIFICATION_ID_EXTRACTION, buildExtractionNotification())
         acquireWakeLock()

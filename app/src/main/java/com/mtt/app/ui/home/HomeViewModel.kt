@@ -36,6 +36,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -380,6 +381,11 @@ class HomeViewModel @Inject constructor(
                 }
                 sourceTextRepository.setSourceTexts(pendingMap)
                 AppLogger.d(TAG, "tryAutoStartTranslation completed")
+
+                // Auto-start translation (debug mode): wait 1s for UI to settle, then trigger
+                delay(1000)
+                AppLogger.d(TAG, "Auto-starting translation after test JSON load")
+                onStartTask()
             } catch (e: Exception) {
                 AppLogger.e(TAG, "tryAutoStartTranslation failed", e)
                 _uiState.update { it.copy(screenState = ScreenState.Error("自动翻译启动失败: ${e.message}")) }
@@ -455,6 +461,7 @@ class HomeViewModel @Inject constructor(
      * For EXTRACT: run glossary extraction.
      */
     fun onStartTask() {
+        AppLogger.d(TAG, "onStartTask called, taskType=${_uiState.value.taskType}, sourceTexts.size=${sourceTexts.size}")
         when (_uiState.value.taskType) {
             TaskType.EXTRACT -> extractTerms()
             else -> {
@@ -512,7 +519,9 @@ class HomeViewModel @Inject constructor(
         val cancelOldId = pendingCancelJobId
         pendingCancelJobId = null
 
+        AppLogger.d(TAG, "startTranslationViaService: sourceTexts.size=${sourceTexts.size}")
         val config = buildConfig()
+        AppLogger.d(TAG, "startTranslationViaService: config built, model=${config.model.modelId}")
         val fileUri = _uiState.value.selectedFileUri ?: ""
         val fileName = _uiState.value.selectedFileName
 
@@ -554,11 +563,14 @@ class HomeViewModel @Inject constructor(
         TranslationService.pendingConfig = config
         TranslationService.pendingJobId = jobId
         TranslationService.pendingFailedItems = emptyList()
+        AppLogger.d(TAG, "startTranslationViaService: pendingTexts set (${sourceTexts.size}), pendingConfig set, jobId=$jobId")
 
         val intent = Intent(context, TranslationService::class.java).apply {
             action = TranslationService.ACTION_START
         }
+        AppLogger.d(TAG, "startTranslationViaService: calling startForegroundService")
         ContextCompat.startForegroundService(context, intent)
+        AppLogger.d(TAG, "startTranslationViaService: startForegroundService called")
 
         _uiState.update {
                     it.copy(
