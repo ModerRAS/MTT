@@ -78,6 +78,18 @@ class MTTApplication : Application() {
                 AppLogger.i(TAG, "Auto-configured OpenAI model")
             }
 
+            if (json.has("batch_size")) {
+                val batchSize = json.optInt("batch_size", 50).coerceIn(1, 200)
+                secureStorage.saveValue(SecureStorage.KEY_BATCH_SIZE, batchSize.toString())
+                AppLogger.i(TAG, "Auto-configured batch size")
+            }
+
+            if (json.has("concurrency")) {
+                val concurrency = json.optInt("concurrency", 1).coerceIn(1, 10)
+                secureStorage.saveValue(SecureStorage.KEY_CONCURRENCY, concurrency.toString())
+                AppLogger.i(TAG, "Auto-configured concurrency")
+            }
+
             // Read test JSON file if specified and pre-load for glossary extraction or manual translation
             // Uses StreamingJsonReader to avoid OOM on large files (5MB+).
             if (json.has("test_json_path")) {
