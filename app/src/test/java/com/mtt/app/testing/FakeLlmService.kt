@@ -1,29 +1,42 @@
 package com.mtt.app.testing
 
 import com.mtt.app.data.model.LlmRequestConfig
+import com.mtt.app.data.model.TranslationPair
 import com.mtt.app.data.model.TranslationResponse
 import com.mtt.app.data.remote.llm.LlmService
 
 /**
  * Test double for LlmService that returns predictable, valid translations.
  * Used for E2E testing without requiring actual LLM API calls.
+ *
+ * @param simulateUntranslatedIndices Set of 0-based indices where the LLM "fails" to translate
+ *                                    (returns source text as translation for those items).
  */
-class FakeLlmService : LlmService {
+class FakeLlmService(
+    private val simulateUntranslatedIndices: Set<Int> = emptySet()
+) : LlmService {
 
     override suspend fun translate(config: LlmRequestConfig): TranslationResponse {
-        val userMessage = config.messages.lastOrNull()?.content ?: ""
+        // Extract source items from the user message (textarea content)
+        val sourceItems = extractSourceItems(config)
 
-        // Extract content between <textarea> and </textarea>
-        val textareaContent = extractTextareaContent(userMessage)
+        // Build translation pairs
+        val translationPairs = sourceItems.mapIndexed { index, source ->
+            val translated = if (index in simulateUntranslatedIndices) {
+                // Simulate LLM not translating this item
+                source
+            } else {
+                // Simulate successful translation - use index for predictable output
+                "【测试译文】译文文本${index + 1}"
+            }
+            TranslationPair(source = source, translated = translated)
+        }
 
-        // Count numbered items (pattern: "N. text" where N is a number)
-        val numberedItems = countNumberedItems(textareaContent)
-
-        // Generate properly formatted response
+        // Generate textarea-formatted content (backward compatibility)
         val translatedContent = buildString {
             appendLine("<textarea>")
-            for (i in 1..numberedItems) {
-                appendLine("$i. 【测试译文】译文文本$i")
+            translationPairs.forEachIndexed { index, pair ->
+                appendLine("${index + 1}. ${pair.translated}")
             }
             append("</textarea>")
         }
@@ -31,11 +44,34 @@ class FakeLlmService : LlmService {
         return TranslationResponse(
             content = translatedContent,
             model = config.model.modelId,
-            tokensUsed = numberedItems * 10
+            tokensUsed = sourceItems.size * 10,
+            inputTokens = sourceItems.size * 5,
+            outputTokens = sourceItems.size * 5,
+            translations = translationPairs.map { it.translated },
+            translationPairs = translationPairs
         )
     }
 
     override suspend fun testConnection(modelId: String): Boolean = true
+
+    /**
+     * Extracts numbered source items from the user message.
+     * Pattern: "N. text" where N is a number starting from 1.
+     */
+    private fun extractSourceItems(config: LlmRequestConfig): List<String> {
+        val userMessage = config.messages.lastOrNull()?.content ?: ""
+        val textareaContent = extractTextareaContent(userMessage)
+
+        if (textareaContent.isBlank()) return emptyList()
+
+        val lines = textareaContent.split("\n")
+        val numberPattern = Regex("^(\\d+)\\.\\s*(.*)$")
+
+        return lines.mapNotNull { line ->
+            val match = numberPattern.matchEntire(line.trim())
+            match?.groupValues?.getOrNull(2)?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
 
     /**
      * Extracts content between <textarea> and </textarea> tags.
@@ -51,20 +87,6 @@ class FakeLlmService : LlmService {
             message.substring(startIndex + startTag.length, endIndex).trim()
         } else {
             ""
-        }
-    }
-
-    /**
-     * Counts numbered items matching pattern "N. text" where N is a positive integer.
-     */
-    private fun countNumberedItems(content: String): Int {
-        if (content.isBlank()) return 0
-
-        val lines = content.split("\n")
-        val numberPattern = Regex("^\\d+\\..+")
-
-        return lines.count { line ->
-            numberPattern.matches(line.trim())
         }
     }
 }

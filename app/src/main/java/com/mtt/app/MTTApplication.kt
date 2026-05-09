@@ -108,6 +108,11 @@ class MTTApplication : Application() {
                         sourceTextMap = map,
                         fileName = testFile.name
                     )
+                    com.mtt.app.ui.home.HomeViewModel.pendingAutoLoad = com.mtt.app.ui.home.HomeViewModel.AutoLoadData(
+                        sourceTexts = map.values.toList(),
+                        sourceTextMap = map,
+                        fileName = testFile.name
+                    )
                     AppLogger.i(TAG, "Auto-loaded test JSON: ${testFile.name} (${map.size} entries)")
                 } else {
                     AppLogger.w(TAG, "Test JSON file not found: $testPath")

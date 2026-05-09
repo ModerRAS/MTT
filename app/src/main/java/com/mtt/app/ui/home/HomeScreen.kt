@@ -83,6 +83,7 @@ import androidx.compose.runtime.collectAsState
 import com.mtt.app.data.model.ExtractedTerm
 import com.mtt.app.ui.components.ExtractionProgressSection
 import com.mtt.app.ui.components.ExtractionReviewDialog
+import com.mtt.app.ui.translation.FailurePanel
 import com.mtt.app.ui.translation.TokenChartData
 import com.mtt.app.ui.translation.TokenDonutChart
 import java.text.NumberFormat
@@ -160,7 +161,7 @@ fun HomeScreen(
             }
         }
     ) { paddingValues ->
-        HomeScreenContent(
+HomeScreenContent(
             uiState = uiState,
             isTranslating = isTranslating,
             isPaused = isPaused,
@@ -177,7 +178,10 @@ fun HomeScreen(
             onExportClick = { exportLauncher.launch("translated.txt") },
             onNavigateToSettings = onNavigateToSettings,
             onResumeJobClick = { jobId -> viewModel.resumeFromJob(jobId) },
-            onDismissResumeClick = viewModel::dismissResumable,
+            onDismissResumeClick = { viewModel.dismissResumable() },
+            onRetryAllFailed = { viewModel.retryAllFailed() },
+            onRetrySingleFailed = { idx -> viewModel.retrySingleFailed(idx) },
+            onSkipFailed = { idx -> viewModel.skipFailed(idx) },
             modifier = Modifier.padding(paddingValues)
         )
 
@@ -188,6 +192,22 @@ fun HomeScreen(
                 existingTerms = emptyList(),
                 onDismiss = { viewModel.cancelExtraction() },
                 onConfirm = { selected -> viewModel.confirmExtraction(selected) }
+            )
+        }
+
+        // Terminal dialog: shown after 3 retry rounds failed
+        if (uiState.shouldShowTerminalDialog) {
+            AlertDialog(
+                onDismissRequest = { },
+                title = { Text("翻译失败") },
+                text = {
+                    Text("以下 ${uiState.failedItems.size} 条无法翻译，请切换模型后重试")
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissTerminalDialog() }) {
+                        Text("知道了")
+                    }
+                }
             )
         }
     }
@@ -213,6 +233,9 @@ private fun HomeScreenContent(
     onNavigateToSettings: () -> Unit,
     onResumeJobClick: (String) -> Unit = {},
     onDismissResumeClick: () -> Unit = {},
+    onRetryAllFailed: () -> Unit = {},
+    onRetrySingleFailed: (Int) -> Unit = {},
+    onSkipFailed: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -667,6 +690,18 @@ private fun HomeScreenContent(
                         )
                     }
                 }
+            }
+
+            // Failure panel
+            if (uiState.failedItems.isNotEmpty()) {
+                FailurePanel(
+                    failedItems = uiState.failedItems,
+                    totalItems = uiState.progress.totalItems,
+                    onRetryAll = onRetryAllFailed,
+                    onRetrySingle = onRetrySingleFailed,
+                    onSkip = onSkipFailed,
+                    isRetrying = uiState.isRetrying
+                )
             }
 
             // Control buttons for translation

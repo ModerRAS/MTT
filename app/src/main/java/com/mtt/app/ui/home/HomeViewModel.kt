@@ -15,6 +15,7 @@ import com.mtt.app.data.io.SourceTextRepository
 import com.mtt.app.data.model.ChannelConfig
 import com.mtt.app.data.model.ChannelType
 import com.mtt.app.data.model.ExtractedTerm
+import com.mtt.app.data.model.FailedItem
 import com.mtt.app.data.model.ExtractionJobEntity
 import com.mtt.app.data.model.GlossaryEntryEntity
 import com.mtt.app.data.model.LlmProvider
@@ -94,7 +95,10 @@ data class HomeUiState(
     val showExtractionReview: Boolean = false,
     val isExtracting: Boolean = false,
     val extractionProgress: ExtractionProgress = ExtractionProgress(0, 0),
-    val extractionMessage: String? = null
+    val extractionMessage: String? = null,
+    val shouldShowTerminalDialog: Boolean = false,
+    val failedItems: List<FailedItem> = emptyList(),
+    val isRetrying: Boolean = false
 )
 
 /**
@@ -344,6 +348,7 @@ class HomeViewModel @Inject constructor(
     // ── Auto-start (debug) ────────────────────────
 
     private fun tryAutoStartTranslation() {
+        AppLogger.d(TAG, "tryAutoStartTranslation called, pendingAutoLoad=${pendingAutoLoad != null}")
         val autoData = pendingAutoLoad ?: return
         pendingAutoLoad = null
 
@@ -355,6 +360,7 @@ class HomeViewModel @Inject constructor(
             try {
                 sourceTexts = pendingTexts
                 sourceTextMap = pendingMap
+                AppLogger.d(TAG, "Setting selectedFileName=$pendingName, totalItems=${pendingTexts.size}")
                 _uiState.update {
                     it.copy(
                         selectedFileName = pendingName,
@@ -366,7 +372,9 @@ class HomeViewModel @Inject constructor(
                     )
                 }
                 sourceTextRepository.setSourceTexts(pendingMap)
+                AppLogger.d(TAG, "tryAutoStartTranslation completed")
             } catch (e: Exception) {
+                AppLogger.e(TAG, "tryAutoStartTranslation failed", e)
                 _uiState.update { it.copy(screenState = ScreenState.Error("自动翻译启动失败: ${e.message}")) }
             }
         }
@@ -466,8 +474,12 @@ class HomeViewModel @Inject constructor(
 
         val config = buildConfig()
         _uiState.update {
-            it.copy(screenState = ScreenState.Translating(it.progress))
-        }
+                    it.copy(
+                        screenState = ScreenState.Translating(it.progress),
+                        failedItems = emptyList(),
+                        shouldShowTerminalDialog = false
+                    )
+                }
 
         translationJob = viewModelScope.launch {
             translateTexts(sourceTexts, config)
@@ -532,8 +544,12 @@ class HomeViewModel @Inject constructor(
         ContextCompat.startForegroundService(context, intent)
 
         _uiState.update {
-            it.copy(screenState = ScreenState.Translating(TranslationProgress.initial()))
-        }
+                    it.copy(
+                        screenState = ScreenState.Translating(TranslationProgress.initial()),
+                        failedItems = emptyList(),
+                        shouldShowTerminalDialog = false
+                    )
+                }
         collectServiceProgress()
     }
 
@@ -691,6 +707,151 @@ class HomeViewModel @Inject constructor(
                     it.copy(screenState = ScreenState.Error(result.error.message ?: "Translation failed"))
                 }
             }
+            is BatchResult.VerificationComplete -> {
+                AppLogger.i(TAG, "Verification complete: ${result.failedCount}/${result.totalItems} failed")
+            }
+            is BatchResult.RetryProgress -> {
+                AppLogger.d(TAG, "Retry round ${result.round}: ${result.completed}/${result.total}")
+            }
+            is BatchResult.RetryComplete -> {
+                AppLogger.w(TAG, "Retry complete: ${result.finalFailedItems.size} items permanently failed")
+                _uiState.update {
+                    it.copy(
+                        shouldShowTerminalDialog = true,
+                        failedItems = result.finalFailedItems
+                    )
+                }
+            }
+        }
+    }
+
+    // ── Retry/Skip failed items ─────────────────────
+
+    /**
+     * Retry all failed items using CURRENT model settings (from SecureStorage).
+     */
+    fun retryAllFailed() {
+        val items = _uiState.value.failedItems
+        if (items.isEmpty()) return
+
+        // Get source texts for failed items
+        val textsToRetry = items.mapNotNull { item ->
+            sourceTexts.getOrNull(item.globalIndex)
+        }
+        if (textsToRetry.isEmpty()) return
+
+        viewModelScope.launch {
+            try {
+                // Reload current settings (model may have changed)
+                loadActiveConfig()
+                reloadGlossaryEntriesSync()
+
+                val config = buildConfig()
+                _uiState.update {
+                    it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
+                }
+
+                translateTexts(textsToRetry, config)
+                    .flowOn(ioDispatcher)
+                    .collect { result -> handleRetryResult(result, items) }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "retryAllFailed failed", e)
+                _uiState.update {
+                    it.copy(screenState = ScreenState.Error("重试失败: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    /**
+     * Retry a single failed item by global index.
+     */
+    fun retrySingleFailed(globalIndex: Int) {
+        val sourceText = sourceTexts.getOrNull(globalIndex) ?: return
+        val currentFailedItems = _uiState.value.failedItems
+
+        viewModelScope.launch {
+            try {
+                loadActiveConfig()
+                reloadGlossaryEntriesSync()
+
+                val config = buildConfig()
+                _uiState.update {
+                    it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
+                }
+
+                val singleItemList = listOf(FailedItem(globalIndex = globalIndex, sourceText = sourceText))
+                translateTexts(listOf(sourceText), config)
+                    .flowOn(ioDispatcher)
+                    .collect { result -> handleRetryResult(result, singleItemList) }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "retrySingleFailed failed", e)
+                _uiState.update {
+                    it.copy(screenState = ScreenState.Error("重试失败: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    /**
+     * Skip a failed item - mark as permanently failed and remove from list.
+     */
+    fun skipFailed(globalIndex: Int) {
+        _uiState.update { state ->
+            state.copy(
+                failedItems = state.failedItems.filterNot { it.globalIndex == globalIndex }
+            )
+        }
+    }
+
+    private fun handleRetryResult(result: BatchResult, originalItems: List<FailedItem>) {
+        when (result) {
+            is BatchResult.Success -> {
+                // Update translated results
+                originalItems.forEachIndexed { idx, item ->
+                    if (idx < result.items.size) {
+                        val translated = result.items[idx]
+                        val currentResults = translatedResults.toMutableList()
+                        if (item.globalIndex < currentResults.size) {
+                            currentResults[item.globalIndex] = translated
+                        }
+                        translatedResults = currentResults
+                    }
+                }
+
+                // Remove succeeded items from failed list
+                _uiState.update { state ->
+                    state.copy(
+                        failedItems = state.failedItems.filterNot { failed ->
+                            originalItems.any { it.globalIndex == failed.globalIndex }
+                        },
+                        isRetrying = false,
+                        screenState = if (state.failedItems.isEmpty()) ScreenState.Completed else state.screenState
+                    )
+                }
+            }
+            is BatchResult.Failure -> {
+                _uiState.update {
+                    it.copy(screenState = ScreenState.Error("重试失败: ${result.error.message}"), isRetrying = false)
+                }
+            }
+            is BatchResult.RetryComplete -> {
+                // Update failed items with new retry state
+                _uiState.update { state ->
+                    val updatedFailed = state.failedItems.map { existing ->
+                        val retryItem = result.finalFailedItems.find { it.globalIndex == existing.globalIndex }
+                        if (retryItem != null) retryItem else existing
+                    }
+                    state.copy(
+                        failedItems = updatedFailed,
+                        isRetrying = false,
+                        shouldShowTerminalDialog = updatedFailed.isNotEmpty()
+                    )
+                }
+            }
+            else -> {
+                // Ignore progress/retrying events during retry
+            }
         }
     }
 
@@ -831,6 +992,10 @@ class HomeViewModel @Inject constructor(
 
     fun dismissResumable() {
         _uiState.update { it.copy(screenState = ScreenState.Idle) }
+    }
+
+    fun dismissTerminalDialog() {
+        _uiState.update { it.copy(shouldShowTerminalDialog = false) }
     }
 
     // ── Export ──────────────────────────────────────

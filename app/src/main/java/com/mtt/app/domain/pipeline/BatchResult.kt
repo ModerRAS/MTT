@@ -1,5 +1,7 @@
 package com.mtt.app.domain.pipeline
 
+import com.mtt.app.data.model.FailedItem
+
 /**
  * Sealed class representing the progression of a translation batch
  * through the pipeline. Emitted as a Kotlin Flow by TranslationExecutor.
@@ -43,5 +45,24 @@ sealed class BatchResult {
         val batchIndex: Int,
         val attempt: Int,
         val reason: String
+    ) : BatchResult()
+
+    /** Verification complete; lists failed items that need retry. */
+    data class VerificationComplete(
+        val totalItems: Int,
+        val failedCount: Int,
+        val failedItems: List<FailedItem>
+    ) : BatchResult()
+
+    /** Retry in progress for a specific round. */
+    data class RetryProgress(
+        val round: Int,
+        val completed: Int,
+        val total: Int
+    ) : BatchResult()
+
+    /** All retry rounds complete; lists final failed items. */
+    data class RetryComplete(
+        val finalFailedItems: List<FailedItem>
     ) : BatchResult()
 }

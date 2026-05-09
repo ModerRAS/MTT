@@ -1,5 +1,6 @@
 package com.mtt.app.domain.usecase
 
+import com.mtt.app.core.logger.AppLogger
 import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.domain.pipeline.BatchResult
@@ -19,6 +20,9 @@ class TranslateTextsUseCase @Inject constructor(
     private val executor: TranslationExecutor,
     private val cacheManager: CacheManager
 ) {
+    companion object {
+        private const val TAG = "TranslateTextsUseCase"
+    }
 
     /**
      * Translate a list of texts according to [config].
@@ -158,6 +162,19 @@ class TranslateTextsUseCase @Inject constructor(
                 }
 
                 is BatchResult.Failure -> emit(result)
+
+                is BatchResult.RetryComplete -> {
+                    // These are handled by the retry loop in executeWithRetry
+                    AppLogger.d(TAG, "Retry complete: ${result.finalFailedItems.size} final failures")
+                }
+
+                is BatchResult.RetryProgress -> {
+                    // These are informational during retry loop
+                }
+
+                is BatchResult.VerificationComplete -> {
+                    // These are informational during retry loop
+                }
             }
         }
     }

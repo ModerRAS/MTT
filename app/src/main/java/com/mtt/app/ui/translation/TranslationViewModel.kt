@@ -26,6 +26,7 @@ import com.mtt.app.data.model.TranslationUiState
 import com.mtt.app.data.remote.llm.ModelRegistry
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.pipeline.BatchResult
+import com.mtt.app.data.model.FailedItem
 import com.mtt.app.service.TranslationService
 import com.mtt.app.ui.glossary.ExtractionProgress
 import com.mtt.app.domain.usecase.TranslateTextsUseCase
@@ -81,6 +82,23 @@ class TranslationViewModel @Inject constructor(
 
     private val _progress = MutableStateFlow(TranslationProgress.initial())
     val progress: StateFlow<TranslationProgress> = _progress.asStateFlow()
+
+    // ── Verification & retry state ──────────────────
+
+    sealed interface VerificationState {
+        object Initial : VerificationState
+        data class InProgress(val total: Int, val failedCount: Int) : VerificationState
+        data class Complete(val failedItems: List<FailedItem>) : VerificationState
+    }
+
+    private val _verificationState = MutableStateFlow<VerificationState>(VerificationState.Initial)
+    val verificationState: StateFlow<VerificationState> = _verificationState.asStateFlow()
+
+    private val _retryInProgress = MutableStateFlow(false)
+    val retryInProgress: StateFlow<Boolean> = _retryInProgress.asStateFlow()
+
+    private val _shouldShowTerminalDialog = MutableStateFlow(false)
+    val shouldShowTerminalDialog: StateFlow<Boolean> = _shouldShowTerminalDialog.asStateFlow()
 
     private val _currentMode = MutableStateFlow(TranslationMode.TRANSLATE)
     val currentMode: StateFlow<TranslationMode> = _currentMode.asStateFlow()
@@ -440,6 +458,11 @@ class TranslationViewModel @Inject constructor(
      * via [startTranslationDirectly] for testability.
      */
     fun onStartTranslation() {
+        // Reset failure state for fresh translation start
+        _verificationState.value = VerificationState.Initial
+        _retryInProgress.value = false
+        _shouldShowTerminalDialog.value = false
+
         if (sourceTexts.isEmpty()) {
             _uiState.value = TranslationUiState.Error("No texts to translate")
             return
@@ -1091,6 +1114,23 @@ class TranslationViewModel @Inject constructor(
                 _uiState.value = TranslationUiState.Error(
                     result.error.message ?: "Translation failed"
                 )
+            }
+
+            is BatchResult.VerificationComplete -> {
+                _verificationState.value = VerificationState.InProgress(
+                    total = result.totalItems,
+                    failedCount = result.failedCount
+                )
+            }
+
+            is BatchResult.RetryProgress -> {
+                _retryInProgress.value = true
+            }
+
+            is BatchResult.RetryComplete -> {
+                _verificationState.value = VerificationState.Complete(result.finalFailedItems)
+                _retryInProgress.value = false
+                _shouldShowTerminalDialog.value = true
             }
         }
     }

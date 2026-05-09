@@ -218,6 +218,15 @@ class TranslationService : Service() {
                                 status = "重试中 (${result.attempt})"
                             )
                         }
+                        is BatchResult.VerificationComplete -> {
+                            AppLogger.i(TAG, "Verification complete: ${result.failedCount}/${result.totalItems} failed")
+                        }
+                        is BatchResult.RetryProgress -> {
+                            AppLogger.d(TAG, "Retry round ${result.round}: ${result.completed}/${result.total}")
+                        }
+                        is BatchResult.RetryComplete -> {
+                            AppLogger.w(TAG, "Retry complete: ${result.finalFailedItems.size} items permanently failed")
+                        }
                     }
                     // Immediate notification refresh on each progress event
                     updateTranslationNotification()

@@ -5,8 +5,13 @@ import androidx.test.core.app.ApplicationProvider
 import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.local.AppDatabase
 import com.mtt.app.data.model.LlmRequestConfig
+import com.mtt.app.data.model.LlmProvider
+import com.mtt.app.data.model.ModelInfo
+import com.mtt.app.data.model.TranslationConfig
 import com.mtt.app.data.model.TranslationMode
 import com.mtt.app.data.model.TranslationStatus
+import com.mtt.app.domain.pipeline.TranslationVerifier
+import com.mtt.app.domain.pipeline.VerificationResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -26,6 +31,7 @@ import org.robolectric.RobolectricTestRunner
  * - CacheManager persists and retrieves translations
  * - JSON export produces correct mapping
  * - Batch resume: 20 items → then 30 more
+ * - Retry flow: verification detects untranslated items, retry recovers them
  */
 @RunWith(RobolectricTestRunner::class)
 class E2EPipelineTest {
@@ -78,12 +84,18 @@ class E2EPipelineTest {
     // ─────────────────────────────────────────────
 
     @Test
-    fun `FakeLlmService translates single item`() = runBlocking {
+    fun `FakeLlmService translates single item with translationPairs`() = runBlocking {
         val item = listOf(1 to "Hello World")
         val config = buildLlmConfig(item)
         val response = fakeLlmService.translate(config)
 
         assertNotNull(response)
+        // Verify translationPairs mode (new behavior)
+        assertNotNull(response.translationPairs)
+        assertEquals(1, response.translationPairs!!.size)
+        assertEquals("Hello World", response.translationPairs[0].source)
+        assertEquals("【测试译文】译文文本1", response.translationPairs[0].translated)
+        // Backward compatibility: content still has textarea format
         assertTrue(response.content.contains("<textarea>"))
         assertTrue(response.content.contains("1. 【测试译文】译文文本1"))
         assertEquals("gpt-4o-mini", response.model)
@@ -91,12 +103,20 @@ class E2EPipelineTest {
     }
 
     @Test
-    fun `FakeLlmService translates multiple items`() = runBlocking {
+    fun `FakeLlmService translates multiple items with translationPairs`() = runBlocking {
         val items = (1..5).map { it to "Source text $it" }
         val config = buildLlmConfig(items)
         val response = fakeLlmService.translate(config)
 
         assertNotNull(response)
+        // Verify translationPairs
+        assertNotNull(response.translationPairs)
+        assertEquals(5, response.translationPairs!!.size)
+        for (i in 1..5) {
+            assertTrue("Missing item $i in translationPairs",
+                response.translationPairs.any { it.source == "Source text $i" && it.translated == "【测试译文】译文文本$i" })
+        }
+        // Verify backward compatibility content
         val content = response.content
         for (i in 1..5) {
             assertTrue("Missing item $i", content.contains("$i. 【测试译文】译文文本$i"))
@@ -105,11 +125,17 @@ class E2EPipelineTest {
     }
 
     @Test
-    fun `FakeLlmService handles empty input`() = runBlocking {
+    fun `FakeLlmService handles empty input with translationPairs`() = runBlocking {
         val config = buildLlmConfig(emptyList())
         val response = fakeLlmService.translate(config)
 
         assertNotNull(response)
+        // translationPairs should be empty
+        assertNotNull(response.translationPairs)
+        assertTrue(response.translationPairs!!.isEmpty())
+        // translations array should also be empty
+        assertNotNull(response.translations)
+        assertTrue(response.translations!!.isEmpty())
         assertEquals("<textarea>\n</textarea>", response.content)
         assertEquals(0, response.tokensUsed)
     }
@@ -328,5 +354,88 @@ class E2EPipelineTest {
             assertNotNull("Item $idx should be cached with TRANSLATED status", cached)
             assertEquals("译文文本${idx + 1}", cached!!.content)
         }
+    }
+
+    // ─────────────────────────────────────────────
+    //  Test 6: Retry flow with simulateUntranslatedIndices
+    // ─────────────────────────────────────────────
+
+    @Test
+    fun `verification detects untranslated and retry recovers them`() = runBlocking {
+        // Create FakeLlmService that "fails" to translate index 0 (first item)
+        val fakeServiceWithFailure = FakeLlmService(simulateUntranslatedIndices = setOf(0))
+
+        // Simulate what the pipeline does: translate items
+        val items = listOf(
+            1 to "Hello World",
+            2 to "Good morning",
+            3 to "Thank you"
+        )
+        val config = buildLlmConfig(items)
+        val response = fakeServiceWithFailure.translate(config)
+
+        // Verify translationPairs contains the expected results
+        assertNotNull(response.translationPairs)
+        assertEquals(3, response.translationPairs!!.size)
+
+        // Build translation map as the pipeline does
+        val translations = mutableMapOf<Int, String>()
+        response.translationPairs!!.forEachIndexed { index, pair ->
+            translations[index] = pair.translated
+        }
+
+        // Run verification (same logic as TranslationVerifier)
+        val verifyItems = items.mapIndexed { idx, (_, text) -> idx to text }
+        val result = TranslationVerifier.verify(verifyItems, translations)
+
+        // Verification should detect that item 0 was not translated
+        assertEquals("Should have 2 passed items", 2, result.passed.size)
+        assertTrue("Items 1 and 2 should pass", result.passed.containsAll(listOf(1, 2)))
+        assertEquals("Should have 1 failed item", 1, result.failed.size)
+        assertEquals("Failed item should be at index 0", 0, result.failed[0].globalIndex)
+
+        // Now simulate retry: create FakeLlmService that succeeds for index 0 this time
+        // (In real pipeline, the same service would retry with different prompt)
+        val fakeServiceSuccess = FakeLlmService(simulateUntranslatedIndices = emptySet())
+        val retryResponse = fakeServiceSuccess.translate(buildLlmConfig(items))
+
+        // Build retry translation map
+        val retryTranslations = mutableMapOf<Int, String>()
+        retryResponse.translationPairs!!.forEachIndexed { index, pair ->
+            retryTranslations[index] = pair.translated
+        }
+
+        // Run verification again on all items
+        val retryResult = TranslationVerifier.verify(verifyItems, retryTranslations)
+
+        // All items should now pass (including the recovered item 0)
+        assertEquals("Should have 3 passed items after retry", 3, retryResult.passed.size)
+        assertEquals("Should have 0 failed items after retry", 0, retryResult.failed.size)
+    }
+
+    @Test
+    fun `FakeLlmService with simulateUntranslatedIndices returns source as translation`() = runBlocking {
+        // Item at index 2 should return source text unchanged
+        val fakeService = FakeLlmService(simulateUntranslatedIndices = setOf(2))
+        val items = listOf(
+            1 to "First",
+            2 to "Second",
+            3 to "Third"
+        )
+        val response = fakeService.translate(buildLlmConfig(items))
+
+        assertNotNull(response.translationPairs)
+        assertEquals(3, response.translationPairs!!.size)
+
+        // Index 0 and 1 should be translated
+        assertEquals("First", response.translationPairs[0].source)
+        assertEquals("【测试译文】译文文本1", response.translationPairs[0].translated)
+
+        assertEquals("Second", response.translationPairs[1].source)
+        assertEquals("【测试译文】译文文本2", response.translationPairs[1].translated)
+
+        // Index 2 should return source text unchanged (simulating LLM failure)
+        assertEquals("Third", response.translationPairs[2].source)
+        assertEquals("Third", response.translationPairs[2].translated)
     }
 }
