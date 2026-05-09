@@ -215,12 +215,16 @@ object GlossaryEngine {
      * → ProtectResult("{GLO_0} is a key stat", {"{GLO_0}": "生命值"})
      * ```
      *
+     * **Important**: Prohibition entries (empty target) are NOT protected here.
+     * They are handled via [buildProhibitionSection] and DoNotTranslate instructions
+     * in the system prompt, which tell the LLM to preserve them as-is.
+     *
      * @param text     Source text to protect
      * @param glossary Glossary entries whose source terms should be protected
      * @return Protected text with placeholders and the placeholder-to-target mapping
      */
     fun protect(text: String, glossary: List<GlossaryEntry>): ProtectResult {
-        val matches = match(text, glossary)
+        val matches = match(text, glossary.filter { it.target.isNotEmpty() })
         if (matches.isEmpty()) {
             return ProtectResult(text, emptyMap())
         }

@@ -226,6 +226,7 @@ class TranslationService : Service() {
                         }
                         is BatchResult.RetryComplete -> {
                             AppLogger.w(TAG, "Retry complete: ${result.finalFailedItems.size} items permanently failed")
+                            pendingFailedItems = result.finalFailedItems
                         }
                     }
                     // Immediate notification refresh on each progress event
@@ -579,6 +580,7 @@ class TranslationService : Service() {
         var pendingTexts: List<String> = emptyList()
         var pendingConfig: TranslationConfig? = null
         var pendingJobId: String? = null
+        var pendingFailedItems: List<com.mtt.app.data.model.FailedItem> = emptyList()
 
         // ── Extraction shared state ──────────────
 

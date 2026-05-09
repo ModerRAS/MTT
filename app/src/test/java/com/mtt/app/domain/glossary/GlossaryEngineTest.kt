@@ -162,6 +162,42 @@ class GlossaryEngineTest {
         assertEquals("Magic", result.placeholders["{GLO_1}"])
     }
 
+    @Test
+    fun `protect ignores prohibition entries with empty target`() {
+        // Prohibition entries (empty target) are NOT protected via placeholder.
+        // They are handled via DoNotTranslate instructions in the system prompt.
+        val glossary = listOf(
+            GlossaryEntry("HP", "Health"),
+            GlossaryEntry("EV001", ""),  // prohibition — empty target
+            GlossaryEntry("Polymer Dispersed Liquid Crystal", "")  // prohibition
+        )
+        val result = GlossaryEngine.protect(
+            "HP is important, EV001 is a code, Polymer Dispersed Liquid Crystal is complex",
+            glossary
+        )
+
+        // Only HP should be protected, not the prohibition terms
+        assertEquals("{GLO_0} is important, EV001 is a code, Polymer Dispersed Liquid Crystal is complex", result.protectedText)
+        assertEquals(1, result.placeholders.size)
+        assertEquals("Health", result.placeholders["{GLO_0}"])
+    }
+
+    @Test
+    fun `protect with only prohibition entries returns original text`() {
+        val glossary = listOf(
+            GlossaryEntry("EV001", ""),
+            GlossaryEntry("Polymer Dispersed Liquid Crystal", "")
+        )
+        val result = GlossaryEngine.protect(
+            "EV001 is a code, Polymer Dispersed Liquid Crystal is complex",
+            glossary
+        )
+
+        // No normal entries → no protection
+        assertEquals("EV001 is a code, Polymer Dispersed Liquid Crystal is complex", result.protectedText)
+        assertTrue(result.placeholders.isEmpty())
+    }
+
     // ═══════════════════════════════════════════════
     //  restore() tests
     // ═══════════════════════════════════════════════

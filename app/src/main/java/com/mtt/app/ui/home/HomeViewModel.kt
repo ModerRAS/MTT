@@ -154,6 +154,9 @@ class HomeViewModel @Inject constructor(
     /** When set, [startTranslationViaService] cancels this job before creating a new one. */
     private var pendingCancelJobId: String? = null
 
+    /** Local retry indices that still failed during the current retry run. */
+    private var currentRetryFailedLocalIndices: Set<Int> = emptySet()
+
     // ── Configurable parameters ────────────────────
 
     private var temperature: Float = 0.3f
@@ -550,6 +553,7 @@ class HomeViewModel @Inject constructor(
         TranslationService.pendingTexts = sourceTexts.toList()
         TranslationService.pendingConfig = config
         TranslationService.pendingJobId = jobId
+        TranslationService.pendingFailedItems = emptyList()
 
         val intent = Intent(context, TranslationService::class.java).apply {
             action = TranslationService.ACTION_START
@@ -573,7 +577,14 @@ class HomeViewModel @Inject constructor(
                 when (progress.status) {
                     "翻译完成" -> {
                         loadResultsFromCache()
-                        _uiState.update { it.copy(screenState = ScreenState.Completed) }
+                        val failedItems = TranslationService.pendingFailedItems
+                        _uiState.update {
+                            it.copy(
+                                screenState = ScreenState.Completed,
+                                failedItems = failedItems,
+                                shouldShowTerminalDialog = failedItems.isNotEmpty()
+                            )
+                        }
                     }
                     "翻译失败" -> {
                         _uiState.update { it.copy(screenState = ScreenState.Error("翻译失败")) }
@@ -760,6 +771,7 @@ class HomeViewModel @Inject constructor(
                 reloadGlossaryEntriesSync()
 
                 val config = buildConfig()
+                currentRetryFailedLocalIndices = emptySet()
                 _uiState.update {
                     it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
                 }
@@ -789,6 +801,7 @@ class HomeViewModel @Inject constructor(
                 reloadGlossaryEntriesSync()
 
                 val config = buildConfig()
+                currentRetryFailedLocalIndices = emptySet()
                 _uiState.update {
                     it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
                 }
@@ -818,20 +831,26 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun handleRetryResult(result: BatchResult, originalItems: List<FailedItem>) {
+        val localToGlobal = originalItems.mapIndexed { localIndex, failedItem ->
+            localIndex to failedItem.globalIndex
+        }.toMap()
+        fun remapFailedItems(items: List<FailedItem>): List<FailedItem> =
+            items.map { failed ->
+                failed.copy(globalIndex = localToGlobal[failed.globalIndex] ?: failed.globalIndex)
+            }
+
         when (result) {
             is BatchResult.VerificationComplete -> {
+                currentRetryFailedLocalIndices = remapFailedItems(result.failedItems).map { it.globalIndex }.toSet()
                 _uiState.update { state ->
                     state.copy(
-                        failedItems = result.failedItems,
+                        failedItems = remapFailedItems(result.failedItems),
                         shouldShowTerminalDialog = false
                     )
                 }
             }
             is BatchResult.Success -> {
-                val stillFailed = _uiState.value.failedItems
-                    .filter { failed -> originalItems.any { it.globalIndex == failed.globalIndex } }
-                    .map { it.globalIndex }
-                    .toSet()
+                val stillFailed = currentRetryFailedLocalIndices.mapNotNull { localToGlobal[it] }.toSet()
                 // Update translated results
                 originalItems.forEachIndexed { idx, item ->
                     if (item.globalIndex in stillFailed) return@forEachIndexed
@@ -856,6 +875,7 @@ class HomeViewModel @Inject constructor(
                         screenState = if (state.failedItems.isEmpty()) ScreenState.Completed else state.screenState
                     )
                 }
+                currentRetryFailedLocalIndices = emptySet()
             }
             is BatchResult.Failure -> {
                 _uiState.update {
@@ -864,9 +884,11 @@ class HomeViewModel @Inject constructor(
             }
             is BatchResult.RetryComplete -> {
                 // Update failed items with new retry state
+                val remappedRetryItems = remapFailedItems(result.finalFailedItems)
+                currentRetryFailedLocalIndices = remappedRetryItems.map { it.globalIndex }.toSet()
                 _uiState.update { state ->
                     val updatedFailed = state.failedItems.map { existing ->
-                        val retryItem = result.finalFailedItems.find { it.globalIndex == existing.globalIndex }
+                        val retryItem = remappedRetryItems.find { it.globalIndex == existing.globalIndex }
                         if (retryItem != null) retryItem else existing
                     }
                     state.copy(

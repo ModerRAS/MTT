@@ -332,6 +332,35 @@ class TranslationServiceTest {
         assertEquals(null, TranslationService.pendingConfig)
     }
 
+    @Test
+    fun `pendingFailedItems defaults to empty list`() {
+        // Reset between tests
+        TranslationService.pendingFailedItems = emptyList()
+
+        assertTrue(TranslationService.pendingFailedItems.isEmpty())
+    }
+
+    @Test
+    fun `pendingFailedItems can be set and cleared`() {
+        val failedItems = listOf(
+            com.mtt.app.data.model.FailedItem(
+                globalIndex = 0,
+                sourceText = "failed text",
+                retryCount = 3,
+                permanentlyFailed = true
+            )
+        )
+
+        TranslationService.pendingFailedItems = failedItems
+        assertEquals(1, TranslationService.pendingFailedItems.size)
+        assertEquals(0, TranslationService.pendingFailedItems[0].globalIndex)
+        assertTrue(TranslationService.pendingFailedItems[0].permanentlyFailed)
+
+        // Reset as startTranslationViaService does
+        TranslationService.pendingFailedItems = emptyList()
+        assertTrue(TranslationService.pendingFailedItems.isEmpty())
+    }
+
     // ═══════════════════════════════════════════════
     //  WakeLock
     // ═══════════════════════════════════════════════
