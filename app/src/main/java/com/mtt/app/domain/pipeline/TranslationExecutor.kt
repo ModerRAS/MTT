@@ -64,6 +64,9 @@ class TranslationExecutor @Inject constructor(
      */
     private var currentLlmService: LlmService? = null
 
+    /** Test hook for injecting a deterministic LLM service without touching DI. */
+    internal var llmServiceOverride: LlmService? = null
+
     /**
      * Create a provider-specific [LlmService] from the user's config.
      *
@@ -115,7 +118,7 @@ class TranslationExecutor @Inject constructor(
         }
 
         // Dynamically create the provider-specific LlmService from user config
-        currentLlmService = createLlmService(config.model.provider)
+        currentLlmService = llmServiceOverride ?: createLlmService(config.model.provider)
 
         emit(BatchResult.Started(batchIndex = 0, size = texts.size))
 
@@ -304,7 +307,7 @@ class TranslationExecutor @Inject constructor(
                     saveCompletedTexts(
                         chunkPositions, globalResultMap, posToTextIndex,
                         texts, allTextSegments, textToLlmPositions,
-                        savedTexts, segmentGlobalPosMap, config, projectId,
+                        savedTexts, segmentGlobalPosMap, globalNonEmptyItems, config, projectId,
                         failedGlobalPositions
                     )
                     emitProgress(
@@ -896,6 +899,7 @@ class TranslationExecutor @Inject constructor(
         textToLlmPositions: Map<Int, List<Int>>,
         savedTexts: MutableSet<Int>,
         segmentGlobalPosMap: Map<Pair<Int, Int>, Int>,
+        globalNonEmptyItems: List<Pair<Int, String>>,
         config: TranslationConfig,
         projectId: String,
         failedGlobalPositions: Set<Int> = emptySet()
@@ -912,6 +916,11 @@ class TranslationExecutor @Inject constructor(
             // Skip texts that have failed positions (API/network errors) - don't cache partial results
             if (llmPositions.any { it in failedGlobalPositions }) continue
             if (!llmPositions.all { it in globalResultMap }) continue
+            val verification = TranslationVerifier.verify(
+                items = llmPositions.map { pos -> pos to globalNonEmptyItems[pos].second },
+                translations = globalResultMap
+            )
+            if (verification.failed.isNotEmpty()) continue
 
             try {
                 val ts = allTextSegments[textIdx]

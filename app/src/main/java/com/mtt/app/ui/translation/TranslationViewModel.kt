@@ -1130,7 +1130,7 @@ class TranslationViewModel @Inject constructor(
             is BatchResult.RetryComplete -> {
                 _verificationState.value = VerificationState.Complete(result.finalFailedItems)
                 _retryInProgress.value = false
-                _shouldShowTerminalDialog.value = true
+                _shouldShowTerminalDialog.value = result.finalFailedItems.isNotEmpty()
             }
         }
     }

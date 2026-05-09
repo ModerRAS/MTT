@@ -27,6 +27,7 @@ import com.mtt.app.data.model.TranslationProgress
 import com.mtt.app.data.remote.llm.ModelRegistry
 import com.mtt.app.data.security.SecureStorage
 import com.mtt.app.domain.pipeline.BatchResult
+import com.mtt.app.domain.util.LanguageDetector
 import com.mtt.app.domain.usecase.ExtractTermsUseCase
 import com.mtt.app.domain.usecase.TranslateTextsUseCase
 import com.mtt.app.service.TranslationService
@@ -361,9 +362,12 @@ class HomeViewModel @Inject constructor(
                 sourceTexts = pendingTexts
                 sourceTextMap = pendingMap
                 AppLogger.d(TAG, "Setting selectedFileName=$pendingName, totalItems=${pendingTexts.size}")
+                val detectedLanguages = detectLanguagesFor(sourceTexts)
                 _uiState.update {
                     it.copy(
                         selectedFileName = pendingName,
+                        sourceLang = detectedLanguages.first,
+                        targetLang = detectedLanguages.second,
                         progress = it.progress.copy(
                             totalItems = sourceTexts.size,
                             completedItems = 0,
@@ -420,9 +424,13 @@ class HomeViewModel @Inject constructor(
                 sourceTextRepository.setSourceTexts(map)
                 translatedResults = emptyList()
 
+                val detectedLanguages = detectLanguagesFor(sourceTexts)
+
                 _uiState.update {
                     it.copy(
                         screenState = ScreenState.Idle,
+                        sourceLang = detectedLanguages.first,
+                        targetLang = detectedLanguages.second,
                         progress = it.progress.copy(
                             totalItems = sourceTexts.size,
                             completedItems = 0,
@@ -465,6 +473,11 @@ class HomeViewModel @Inject constructor(
         TaskType.POLISH -> TranslationMode.POLISH
         TaskType.PROOFREAD -> TranslationMode.PROOFREAD
         TaskType.EXTRACT -> TranslationMode.TRANSLATE // fallback
+    }
+
+    private fun detectLanguagesFor(texts: List<String>): Pair<String, String> {
+        val sourceLang = LanguageDetector.detect(texts)
+        return sourceLang to LanguageDetector.defaultTargetFor(sourceLang)
     }
 
     // ── Direct translation (test path) ─────────────
@@ -717,7 +730,7 @@ class HomeViewModel @Inject constructor(
                 AppLogger.w(TAG, "Retry complete: ${result.finalFailedItems.size} items permanently failed")
                 _uiState.update {
                     it.copy(
-                        shouldShowTerminalDialog = true,
+                        shouldShowTerminalDialog = result.finalFailedItems.isNotEmpty(),
                         failedItems = result.finalFailedItems
                     )
                 }
@@ -806,9 +819,22 @@ class HomeViewModel @Inject constructor(
 
     private fun handleRetryResult(result: BatchResult, originalItems: List<FailedItem>) {
         when (result) {
+            is BatchResult.VerificationComplete -> {
+                _uiState.update { state ->
+                    state.copy(
+                        failedItems = result.failedItems,
+                        shouldShowTerminalDialog = false
+                    )
+                }
+            }
             is BatchResult.Success -> {
+                val stillFailed = _uiState.value.failedItems
+                    .filter { failed -> originalItems.any { it.globalIndex == failed.globalIndex } }
+                    .map { it.globalIndex }
+                    .toSet()
                 // Update translated results
                 originalItems.forEachIndexed { idx, item ->
+                    if (item.globalIndex in stillFailed) return@forEachIndexed
                     if (idx < result.items.size) {
                         val translated = result.items[idx]
                         val currentResults = translatedResults.toMutableList()
@@ -823,7 +849,8 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { state ->
                     state.copy(
                         failedItems = state.failedItems.filterNot { failed ->
-                            originalItems.any { it.globalIndex == failed.globalIndex }
+                            originalItems.any { it.globalIndex == failed.globalIndex } &&
+                                    failed.globalIndex !in stillFailed
                         },
                         isRetrying = false,
                         screenState = if (state.failedItems.isEmpty()) ScreenState.Completed else state.screenState
@@ -958,11 +985,14 @@ class HomeViewModel @Inject constructor(
                 sourceTextMap = restoredMap
                 translatedResults = emptyList()
                 sourceTextRepository.setSourceTexts(restoredMap)
+                val detectedLanguages = detectLanguagesFor(restoredTexts)
 
                 _uiState.update {
                     it.copy(
                         selectedFileName = meta.sourceFileName,
                         selectedFileUri = meta.sourceFileUri,
+                        sourceLang = detectedLanguages.first,
+                        targetLang = detectedLanguages.second,
                         progress = TranslationProgress(
                             totalItems = restoredTexts.size,
                             completedItems = 0,
@@ -1042,7 +1072,7 @@ class HomeViewModel @Inject constructor(
     internal suspend fun extractTermsDirectly() {
         _uiState.update { it.copy(isExtracting = true, extractionProgress = ExtractionProgress(0, 0)) }
         val texts = sourceTextRepository.sourceTexts.value
-        val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+        val srcLang = _uiState.value.sourceLang
 
         when (val result = extractTermsUseCase.extractTerms(texts, srcLang) { completed, total ->
             _uiState.update { it.copy(extractionProgress = ExtractionProgress(completed, total)) }
@@ -1085,7 +1115,7 @@ class HomeViewModel @Inject constructor(
 
         _uiState.update { it.copy(isExtracting = true, extractionProgress = ExtractionProgress(0, 0)) }
 
-        val srcLang = secureStorage.getValue(SecureStorage.KEY_SOURCE_LANG) ?: "自动检测"
+        val srcLang = _uiState.value.sourceLang
 
         val jobId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()

@@ -77,6 +77,7 @@ class TranslateTextsUseCase @Inject constructor(
         }
 
         val uncachedTexts = uncachedIndices.map { texts[it] }
+        val permanentlyFailedIndices = mutableSetOf<Int>()
 
         // ── 2. Execute translation for uncached texts ──
         executor.executeBatch(uncachedTexts, config).collect { result ->
@@ -121,6 +122,7 @@ class TranslateTextsUseCase @Inject constructor(
                 is BatchResult.Success -> {
                     // 3. Persist fresh translations to cache
                     uncachedIndices.zip(result.items).forEach { (originalIndex, translation) ->
+                        if (originalIndex in permanentlyFailedIndices) return@forEach
                         cacheManager.saveToCache(
                             sourceText = texts[originalIndex],
                             translation = translation,
@@ -164,16 +166,38 @@ class TranslateTextsUseCase @Inject constructor(
                 is BatchResult.Failure -> emit(result)
 
                 is BatchResult.RetryComplete -> {
-                    // These are handled by the retry loop in executeWithRetry
+                    permanentlyFailedIndices.clear()
+                    permanentlyFailedIndices.addAll(
+                        result.finalFailedItems.mapNotNull { failed ->
+                            uncachedIndices.getOrNull(failed.globalIndex)
+                        }
+                    )
                     AppLogger.d(TAG, "Retry complete: ${result.finalFailedItems.size} final failures")
+                    emit(
+                        result.copy(
+                            finalFailedItems = result.finalFailedItems.map { failed ->
+                                failed.copy(
+                                    globalIndex = uncachedIndices.getOrNull(failed.globalIndex) ?: failed.globalIndex
+                                )
+                            }
+                        )
+                    )
                 }
 
                 is BatchResult.RetryProgress -> {
-                    // These are informational during retry loop
+                    emit(result)
                 }
 
                 is BatchResult.VerificationComplete -> {
-                    // These are informational during retry loop
+                    emit(
+                        result.copy(
+                            failedItems = result.failedItems.map { failed ->
+                                failed.copy(
+                                    globalIndex = uncachedIndices.getOrNull(failed.globalIndex) ?: failed.globalIndex
+                                )
+                            }
+                        )
+                    )
                 }
             }
         }

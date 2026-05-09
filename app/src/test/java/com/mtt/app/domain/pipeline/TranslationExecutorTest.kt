@@ -4,7 +4,10 @@ import com.mtt.app.core.error.ApiException
 import com.mtt.app.data.cache.CacheManager
 import com.mtt.app.data.llm.RateLimiter
 import com.mtt.app.data.model.*
+import com.mtt.app.data.remote.llm.LlmService
+import com.mtt.app.testing.FakeLlmService
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -54,6 +57,7 @@ class TranslationExecutorTest {
         cacheManager = mockk(relaxed = true)
         // Mock rateLimiter.acquire() (suspend function) to not throw
         coEvery { rateLimiter.acquire(any()) } returns Unit
+        coEvery { cacheManager.getCachedBatch(any(), any(), any(), any()) } returns emptyMap()
         // Mock cacheManager.saveToCache() to not throw
         coEvery { cacheManager.saveToCache(any(), any(), any(), any(), any()) } returns Unit
         executor = TranslationExecutor(okHttpClient, rateLimiter, cacheManager)
@@ -305,5 +309,100 @@ class TranslationExecutorTest {
         val results = executor.executeBatch(texts, configWithTool).toList()
         val last = results.last()
         assertTrue("Should complete without crash", last is BatchResult.Success || last is BatchResult.Failure)
+    }
+
+    @Test
+    fun `executeBatch emits verification and retry events for permanently untranslated item`() = runBlocking {
+        executor.llmServiceOverride = FakeLlmService(simulateUntranslatedIndices = setOf(0))
+        val config = testConfig.copy(batchSize = 8)
+        val texts = listOf("Hello world")
+
+        val results = executor.executeBatch(texts, config).toList()
+
+        val verification = results.filterIsInstance<BatchResult.VerificationComplete>().single()
+        assertEquals(1, verification.failedCount)
+        assertEquals(0, verification.failedItems.single().globalIndex)
+
+        val retryComplete = results.filterIsInstance<BatchResult.RetryComplete>().single()
+        val failed = retryComplete.finalFailedItems.single()
+        assertEquals(0, failed.globalIndex)
+        assertEquals(3, failed.retryCount)
+        assertTrue(failed.permanentlyFailed)
+
+        val retryRounds = results.filterIsInstance<BatchResult.RetryProgress>().map { it.round }.toSet()
+        assertEquals(setOf(1, 2, 3), retryRounds)
+
+        val success = results.last() as BatchResult.Success
+        assertEquals(texts, success.items)
+        coVerify(exactly = 0) {
+            cacheManager.saveToCache("Hello world", any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `executeBatch automatically retries and recovers initially untranslated item`() = runBlocking {
+        val recoveringService = RecoveringLlmService()
+        executor.llmServiceOverride = recoveringService
+        val config = testConfig.copy(batchSize = 8)
+        val texts = listOf("Hello world", "Good morning")
+
+        val results = executor.executeBatch(texts, config).toList()
+
+        val verification = results.filterIsInstance<BatchResult.VerificationComplete>().single()
+        assertEquals(1, verification.failedCount)
+
+        val retryComplete = results.filterIsInstance<BatchResult.RetryComplete>().single()
+        assertTrue(retryComplete.finalFailedItems.isEmpty())
+
+        val success = results.last() as BatchResult.Success
+        assertEquals("【重试译文】Hello world", success.items[0])
+        assertEquals("【测试译文】Good morning", success.items[1])
+        assertEquals(listOf(2, 1), recoveringService.requestSizes)
+        coVerify {
+            cacheManager.saveToCache("Hello world", "【重试译文】Hello world", any(), any(), any())
+        }
+    }
+
+    private class RecoveringLlmService : LlmService {
+        var callCount = 0
+        val requestSizes = mutableListOf<Int>()
+
+        override suspend fun translate(config: LlmRequestConfig): TranslationResponse {
+            callCount++
+            val sources = extractSources(config.messages.lastOrNull()?.content.orEmpty())
+            requestSizes.add(sources.size)
+            val pairs = sources.mapIndexed { index, source ->
+                val translated = if (callCount == 1 && index == 0) {
+                    source
+                } else if (callCount == 1) {
+                    "【测试译文】$source"
+                } else {
+                    "【重试译文】$source"
+                }
+                TranslationPair(source = source, translated = translated)
+            }
+            return TranslationResponse(
+                content = pairs.joinToString("\n") { it.translated },
+                model = config.model.modelId,
+                tokensUsed = pairs.size * 10,
+                inputTokens = pairs.size * 5,
+                outputTokens = pairs.size * 5,
+                translations = pairs.map { it.translated },
+                translationPairs = pairs
+            )
+        }
+
+        override suspend fun testConnection(modelId: String): Boolean = true
+
+        private fun extractSources(message: String): List<String> {
+            val start = message.indexOf("<textarea>")
+            val end = message.indexOf("</textarea>")
+            if (start == -1 || end == -1 || start >= end) return emptyList()
+            val textarea = message.substring(start + "<textarea>".length, end)
+            val numberedLine = Regex("""^\s*\d+\.\s*(.+?)\s*$""")
+            return textarea.lines().mapNotNull { line ->
+                numberedLine.matchEntire(line)?.groupValues?.get(1)
+            }
+        }
     }
 }
