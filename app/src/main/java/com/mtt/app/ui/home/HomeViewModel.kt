@@ -155,8 +155,8 @@ class HomeViewModel @Inject constructor(
     /** When set, [startTranslationViaService] cancels this job before creating a new one. */
     private var pendingCancelJobId: String? = null
 
-    /** Local retry indices that still failed during the current retry run. */
-    private var currentRetryFailedLocalIndices: Set<Int> = emptySet()
+    /** Global indices that still failed during the current retry run. */
+    private var currentRetryFailedGlobalIndices: Set<Int> = emptySet()
 
     // ── Configurable parameters ────────────────────
 
@@ -783,7 +783,7 @@ class HomeViewModel @Inject constructor(
                 reloadGlossaryEntriesSync()
 
                 val config = buildConfig()
-                currentRetryFailedLocalIndices = emptySet()
+                currentRetryFailedGlobalIndices = emptySet()
                 _uiState.update {
                     it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
                 }
@@ -813,7 +813,7 @@ class HomeViewModel @Inject constructor(
                 reloadGlossaryEntriesSync()
 
                 val config = buildConfig()
-                currentRetryFailedLocalIndices = emptySet()
+                currentRetryFailedGlobalIndices = emptySet()
                 _uiState.update {
                     it.copy(screenState = ScreenState.Translating(it.progress), isRetrying = true)
                 }
@@ -853,16 +853,19 @@ class HomeViewModel @Inject constructor(
 
         when (result) {
             is BatchResult.VerificationComplete -> {
-                currentRetryFailedLocalIndices = remapFailedItems(result.failedItems).map { it.globalIndex }.toSet()
+                val remappedFailedItems = remapFailedItems(result.failedItems)
+                currentRetryFailedGlobalIndices = remappedFailedItems.map { it.globalIndex }.toSet()
                 _uiState.update { state ->
+                    val originalGlobalIndices = originalItems.map { it.globalIndex }.toSet()
+                    val unrelatedFailedItems = state.failedItems.filterNot { it.globalIndex in originalGlobalIndices }
                     state.copy(
-                        failedItems = remapFailedItems(result.failedItems),
+                        failedItems = unrelatedFailedItems + remappedFailedItems,
                         shouldShowTerminalDialog = false
                     )
                 }
             }
             is BatchResult.Success -> {
-                val stillFailed = currentRetryFailedLocalIndices.mapNotNull { localToGlobal[it] }.toSet()
+                val stillFailed = currentRetryFailedGlobalIndices
                 // Update translated results
                 originalItems.forEachIndexed { idx, item ->
                     if (item.globalIndex in stillFailed) return@forEachIndexed
@@ -878,16 +881,17 @@ class HomeViewModel @Inject constructor(
 
                 // Remove succeeded items from failed list
                 _uiState.update { state ->
+                    val updatedFailedItems = state.failedItems.filterNot { failed ->
+                        originalItems.any { it.globalIndex == failed.globalIndex } &&
+                                failed.globalIndex !in stillFailed
+                    }
                     state.copy(
-                        failedItems = state.failedItems.filterNot { failed ->
-                            originalItems.any { it.globalIndex == failed.globalIndex } &&
-                                    failed.globalIndex !in stillFailed
-                        },
+                        failedItems = updatedFailedItems,
                         isRetrying = false,
-                        screenState = if (state.failedItems.isEmpty()) ScreenState.Completed else state.screenState
+                        screenState = ScreenState.Completed
                     )
                 }
-                currentRetryFailedLocalIndices = emptySet()
+                currentRetryFailedGlobalIndices = emptySet()
             }
             is BatchResult.Failure -> {
                 _uiState.update {
@@ -897,16 +901,16 @@ class HomeViewModel @Inject constructor(
             is BatchResult.RetryComplete -> {
                 // Update failed items with new retry state
                 val remappedRetryItems = remapFailedItems(result.finalFailedItems)
-                currentRetryFailedLocalIndices = remappedRetryItems.map { it.globalIndex }.toSet()
+                currentRetryFailedGlobalIndices = remappedRetryItems.map { it.globalIndex }.toSet()
                 _uiState.update { state ->
-                    val updatedFailed = state.failedItems.map { existing ->
-                        val retryItem = remappedRetryItems.find { it.globalIndex == existing.globalIndex }
-                        if (retryItem != null) retryItem else existing
-                    }
+                    val originalGlobalIndices = originalItems.map { it.globalIndex }.toSet()
+                    val unrelatedFailedItems = state.failedItems.filterNot { it.globalIndex in originalGlobalIndices }
+                    val updatedFailed = unrelatedFailedItems + remappedRetryItems
                     state.copy(
                         failedItems = updatedFailed,
                         isRetrying = false,
-                        shouldShowTerminalDialog = updatedFailed.isNotEmpty()
+                        shouldShowTerminalDialog = updatedFailed.isNotEmpty(),
+                        screenState = ScreenState.Completed
                     )
                 }
             }
