@@ -1,6 +1,8 @@
 package com.mtt.app.domain.pipeline
 
 import com.mtt.app.data.model.FailedItem
+import com.mtt.app.domain.glossary.GlossaryEngine
+import com.mtt.app.domain.glossary.GlossaryEntry
 
 /**
  * Result of verification: lists passed and failed items.
@@ -27,7 +29,8 @@ object TranslationVerifier {
      */
     fun verify(
         items: List<Pair<Int, String>>,
-        translations: Map<Int, String>
+        translations: Map<Int, String>,
+        glossaryEntries: List<GlossaryEntry> = emptyList()
     ): VerificationResult {
         val passed = mutableListOf<Int>()
         val failed = mutableListOf<FailedItem>()
@@ -44,8 +47,8 @@ object TranslationVerifier {
             val trimmedSource = source.trim()
             val trimmedTranslation = translated.trim()
 
-            if (trimmedSource == trimmedTranslation) {
-                // LLM failed to translate — source returned unchanged
+            if (trimmedSource == trimmedTranslation || !GlossaryEngine.verifyApplied(trimmedSource, trimmedTranslation, glossaryEntries)) {
+                // LLM failed to translate, or missed a required glossary target.
                 failed.add(
                     FailedItem(
                         globalIndex = globalIndex,

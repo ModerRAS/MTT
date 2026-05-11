@@ -363,6 +363,37 @@ class TranslationExecutorTest {
         }
     }
 
+    @Test
+    fun `executeBatch keeps glossary-missing retry permanently failed`() = runBlocking {
+        executor.llmServiceOverride = GlossaryMissingLlmService()
+        val config = testConfig.copy(
+            batchSize = 8,
+            glossaryEntries = listOf(
+                GlossaryEntryEntity(
+                    projectId = "default_project",
+                    sourceTerm = "テンタクルメイデン",
+                    targetTerm = "触手少女"
+                )
+            )
+        )
+        val texts = listOf("テンタクルメイデンが来た")
+
+        val results = executor.executeBatch(texts, config).toList()
+
+        val verification = results.filterIsInstance<BatchResult.VerificationComplete>().single()
+        assertEquals(1, verification.failedCount)
+
+        val retryComplete = results.filterIsInstance<BatchResult.RetryComplete>().single()
+        val failed = retryComplete.finalFailedItems.single()
+        assertEquals(0, failed.globalIndex)
+        assertEquals(3, failed.retryCount)
+        assertTrue(failed.permanentlyFailed)
+
+        coVerify(exactly = 0) {
+            cacheManager.saveToCache("テンタクルメイデンが来た", any(), any(), any(), any())
+        }
+    }
+
     private class RecoveringLlmService : LlmService {
         var callCount = 0
         val requestSizes = mutableListOf<Int>()
@@ -380,6 +411,37 @@ class TranslationExecutorTest {
                     "【重试译文】$source"
                 }
                 TranslationPair(source = source, translated = translated)
+            }
+            return TranslationResponse(
+                content = pairs.joinToString("\n") { it.translated },
+                model = config.model.modelId,
+                tokensUsed = pairs.size * 10,
+                inputTokens = pairs.size * 5,
+                outputTokens = pairs.size * 5,
+                translations = pairs.map { it.translated },
+                translationPairs = pairs
+            )
+        }
+
+        override suspend fun testConnection(modelId: String): Boolean = true
+
+        private fun extractSources(message: String): List<String> {
+            val start = message.indexOf("<textarea>")
+            val end = message.indexOf("</textarea>")
+            if (start == -1 || end == -1 || start >= end) return emptyList()
+            val textarea = message.substring(start + "<textarea>".length, end)
+            val numberedLine = Regex("""^\s*\d+\.\s*(.+?)\s*$""")
+            return textarea.lines().mapNotNull { line ->
+                numberedLine.matchEntire(line)?.groupValues?.get(1)
+            }
+        }
+    }
+
+    private class GlossaryMissingLlmService : LlmService {
+        override suspend fun translate(config: LlmRequestConfig): TranslationResponse {
+            val sources = extractSources(config.messages.lastOrNull()?.content.orEmpty())
+            val pairs = sources.map { source ->
+                TranslationPair(source = source, translated = "术语错误译文")
             }
             return TranslationResponse(
                 content = pairs.joinToString("\n") { it.translated },

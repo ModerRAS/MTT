@@ -227,6 +227,54 @@ class GlossaryEngineTest {
         assertEquals("Health and Magic", result)
     }
 
+    @Test
+    fun `verifyApplied passes when all matched glossary targets appear`() {
+        val glossary = listOf(
+            GlossaryEntry("テンタクルメイデン", "触手少女"),
+            GlossaryEntry("アルミネス", "阿尔米涅斯")
+        )
+
+        val result = GlossaryEngine.verifyApplied(
+            "テンタクルメイデンとアルミネス",
+            "触手少女和阿尔米涅斯",
+            glossary
+        )
+
+        assertTrue(result)
+    }
+
+    @Test
+    fun `verifyApplied fails when matched glossary target is missing`() {
+        val glossary = listOf(
+            GlossaryEntry("テンタクルメイデン", "触手少女"),
+            GlossaryEntry("アルミネス", "阿尔米涅斯")
+        )
+
+        val result = GlossaryEngine.verifyApplied(
+            "テンタクルメイデンとアルミネス",
+            "OP设置和Polymer Dispersed Liquid Crystal确认了阿尔米涅斯",
+            glossary
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun `verifyApplied ignores prohibition entries with empty target`() {
+        val glossary = listOf(
+            GlossaryEntry("Polymer Dispersed Liquid Crystal", ""),
+            GlossaryEntry("EV001", "")
+        )
+
+        val result = GlossaryEngine.verifyApplied(
+            "Polymer Dispersed Liquid CrystalとEV001",
+            "Polymer Dispersed Liquid Crystal和EV001",
+            glossary
+        )
+
+        assertTrue(result)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  buildGlossarySection() tests
     // ═══════════════════════════════════════════════════════════════

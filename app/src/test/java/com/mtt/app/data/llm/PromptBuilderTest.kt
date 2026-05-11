@@ -153,6 +153,7 @@ class PromptBuilderTest {
         assertTrue(result.contains("translated"))
         assertTrue(result.contains("Glossary"))
         assertTrue(result.contains("DoNotTranslate"))
+        assertTrue(result.contains("{GLO_N}"))
     }
 
     @Test

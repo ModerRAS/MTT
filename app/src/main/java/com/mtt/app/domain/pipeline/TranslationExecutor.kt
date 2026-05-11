@@ -308,7 +308,7 @@ class TranslationExecutor @Inject constructor(
                         chunkPositions, globalResultMap, posToTextIndex,
                         texts, allTextSegments, textToLlmPositions,
                         savedTexts, segmentGlobalPosMap, globalNonEmptyItems, config, projectId,
-                        failedGlobalPositions
+                        failedGlobalPositions, relevantGlossary
                     )
                     emitProgress(
                         BatchResult.Progress(
@@ -329,7 +329,7 @@ class TranslationExecutor @Inject constructor(
         val segmentVerifyItems = llmPositions.map { pos ->
             pos to globalNonEmptyItems[pos].second
         }
-        val segmentVerifyResult = TranslationVerifier.verify(segmentVerifyItems, globalResultMap)
+        val segmentVerifyResult = TranslationVerifier.verify(segmentVerifyItems, globalResultMap, relevantGlossary)
 
         if (segmentVerifyResult.failed.isNotEmpty()) {
             emitProgress(
@@ -480,7 +480,7 @@ class TranslationExecutor @Inject constructor(
             is ValidationResult.WrongLanguage -> "WrongLanguage"
         }
         AppLogger.d(TAG, "Text fallback validation: $validationLabel (expected ${remainingPositions.size} items)")
-        AppLogger.d(TAG, "Response preview: ${response.content.take(200).replace("\n", "\\n")}")
+        AppLogger.d(TAG, "Text fallback response length: ${response.content.length} chars")
 
         if (validation != ValidationResult.Valid) {
             for (pos in remainingPositions) {
@@ -845,8 +845,12 @@ class TranslationExecutor @Inject constructor(
                     val trimmedSource = sourceText.trim()
                     val trimmedTranslation = translation.trim()
 
-                    if (trimmedSource != trimmedTranslation && chunkResult.failedPositions.contains(localPos).not()) {
-                        // Success: translation differs from source
+                    val glossaryApplied = GlossaryEngine.verifyApplied(trimmedSource, trimmedTranslation, glossaryEntries)
+                    if (trimmedSource != trimmedTranslation &&
+                        glossaryApplied &&
+                        chunkResult.failedPositions.contains(localPos).not()
+                    ) {
+                        // Success: translation differs from source and satisfies glossary targets.
                         onSuccess(globalIndex, translation)
                         completedInRound++
                         AppLogger.d(TAG, "Retry round $round: item #${globalIndex} succeeded")
@@ -902,7 +906,8 @@ class TranslationExecutor @Inject constructor(
         globalNonEmptyItems: List<Pair<Int, String>>,
         config: TranslationConfig,
         projectId: String,
-        failedGlobalPositions: Set<Int> = emptySet()
+        failedGlobalPositions: Set<Int> = emptySet(),
+        glossaryEntries: List<GlossaryEntry> = emptyList()
     ) {
         val touchedTexts = mutableSetOf<Int>()
         for (pos in chunkPositions) {
@@ -918,7 +923,8 @@ class TranslationExecutor @Inject constructor(
             if (!llmPositions.all { it in globalResultMap }) continue
             val verification = TranslationVerifier.verify(
                 items = llmPositions.map { pos -> pos to globalNonEmptyItems[pos].second },
-                translations = globalResultMap
+                translations = globalResultMap,
+                glossaryEntries = glossaryEntries
             )
             if (verification.failed.isNotEmpty()) continue
 

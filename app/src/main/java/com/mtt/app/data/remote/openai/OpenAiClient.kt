@@ -187,7 +187,7 @@ class OpenAiClient(
         // If tool call mode, parse accumulated arguments JSON
         if (isToolCall && toolCallArgsBuilder.isNotEmpty()) {
             val argsJson = toolCallArgsBuilder.toString()
-            AppLogger.d(TAG, "SSE tool call args: ${argsJson.take(200)} (${argsJson.length} chars)")
+            AppLogger.d(TAG, "SSE tool call args received (${argsJson.length} chars)")
             try {
                 val argsObj = JSONObject(argsJson)
                 val translationsArray = argsObj.optJSONArray("translations")

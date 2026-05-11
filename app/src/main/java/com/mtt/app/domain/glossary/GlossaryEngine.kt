@@ -272,6 +272,19 @@ object GlossaryEngine {
         return result
     }
 
+    /**
+     * Checks whether every glossary term present in [source] has its target term
+     * present in [translated]. Prohibition entries (empty target) are ignored
+     * because they must remain in their original form rather than become a target.
+     */
+    fun verifyApplied(source: String, translated: String, glossary: List<GlossaryEntry>): Boolean {
+        val matches = match(source, glossary.filter { it.target.isNotEmpty() })
+        if (matches.isEmpty()) return true
+        return matches.all { match ->
+            translated.contains(match.entry.target)
+        }
+    }
+
     // ──────────────────────────────────────────────
     //  Prompt formatting (AiNiee-compatible)
     // ──────────────────────────────────────────────

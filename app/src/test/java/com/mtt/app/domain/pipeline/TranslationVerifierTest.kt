@@ -1,6 +1,7 @@
 package com.mtt.app.domain.pipeline
 
 import com.mtt.app.data.model.FailedItem
+import com.mtt.app.domain.glossary.GlossaryEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -195,6 +196,45 @@ class TranslationVerifierTest {
         val result = TranslationVerifier.verify(items, translations)
 
         assertTrue(result.passed.isEmpty())
+        assertTrue(result.failed.isEmpty())
+    }
+
+    @Test
+    fun `verify fails when matched glossary target is missing`() {
+        val items = listOf(
+            0 to "テンタクルメイデンとアルミネス"
+        )
+        val translations = mapOf(
+            0 to "OP设置和Polymer Dispersed Liquid Crystal确认了阿尔米涅斯"
+        )
+        val glossary = listOf(
+            GlossaryEntry("テンタクルメイデン", "触手少女"),
+            GlossaryEntry("アルミネス", "阿尔米涅斯")
+        )
+
+        val result = TranslationVerifier.verify(items, translations, glossary)
+
+        assertTrue(result.passed.isEmpty())
+        assertEquals(1, result.failed.size)
+        assertEquals(0, result.failed[0].globalIndex)
+    }
+
+    @Test
+    fun `verify passes when all matched glossary targets are present`() {
+        val items = listOf(
+            0 to "テンタクルメイデンとアルミネス"
+        )
+        val translations = mapOf(
+            0 to "触手少女和阿尔米涅斯确认了。"
+        )
+        val glossary = listOf(
+            GlossaryEntry("テンタクルメイデン", "触手少女"),
+            GlossaryEntry("アルミネス", "阿尔米涅斯")
+        )
+
+        val result = TranslationVerifier.verify(items, translations, glossary)
+
+        assertEquals(1, result.passed.size)
         assertTrue(result.failed.isEmpty())
     }
 }

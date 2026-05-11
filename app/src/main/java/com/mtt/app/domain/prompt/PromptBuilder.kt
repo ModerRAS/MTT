@@ -139,6 +139,7 @@ object PromptBuilder {
         sb.appendLine("5. 保持原文的语气、风格和格式")
         sb.appendLine("6. 原文中的换行符(\\n)、回车符(\\r)、制表符(\\t)等控制字符是内容的一部分，必须在译文中保留相同数量")
         sb.appendLine("7. 一次性输出全部条目的翻译，不要遗漏")
+        sb.appendLine("8. 原文中的{GLO_N}占位符必须在译文中原样保留，不能翻译、重排、添加额外花括号或替换为术语译文")
 
         appendOptionalPromptSection(sb, glossary)
         appendOptionalPromptSection(sb, prohibition)

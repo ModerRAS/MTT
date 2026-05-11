@@ -94,7 +94,8 @@ object LoggingInterceptor {
 
     /**
      * Custom interceptor for additional request/response logging.
-     * Use this for debugging specific API calls.
+     * Bodies are never logged, even when [logBodies] is true, because they can
+     * contain source text, translated text, or other private model output.
      */
     fun createCustomInterceptor(
         logHeaders: Boolean = true,
@@ -134,19 +135,7 @@ object LoggingInterceptor {
             }
 
             if (logBodies) {
-                val responseBody = response.body
-                if (responseBody != null) {
-                    val bodyText = responseBody.string()
-
-                    // Truncate long bodies
-                    val truncatedBody = if (bodyText.length > 500) {
-                        bodyText.substring(0, 500) + "... [TRUNCATED]"
-                    } else {
-                        bodyText
-                    }
-
-                    Log.d(TAG, "Response body: ${redactSensitiveData(truncatedBody)}")
-                }
+                Log.d(TAG, "Response body logging omitted")
             }
 
             response
